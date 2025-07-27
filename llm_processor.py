@@ -1,8 +1,13 @@
 import os
 import re
 import datetime
+import logging
 from typing import Dict, Optional, Any
 from dotenv import load_dotenv
+
+# Suppress verbose langchain retry logs
+logging.getLogger("langchain_google_genai").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
 
 # Load environment variables
 load_dotenv()
@@ -72,18 +77,28 @@ class QueryAnalyzer:
             result['offline_mode'] = True
             return result
         
-        # Thử dùng LLM với timeout ngắn
+        # Thử dùng LLM với error handling cải thiện
         try:
             return self._analyze_with_llm(user_message)
         except Exception as e:
-            print(f"⚠️ LLM không khả dụng: {e}")
-            _llm_available = False
+            error_msg = str(e)
             
-            # Hiển thị warning một lần
-            if not _offline_warning_shown:
-                print("\n🔴 CHUYỂN SANG CHẾ ĐỘ OFFLINE")
-                print("💡 Vui lòng nhập rõ ràng hơn: 'ăn phở 30k', 'xóa phở', 'thống kê hôm nay'")
-                _offline_warning_shown = True
+            # Check for quota error - fail fast
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                if not _offline_warning_shown:
+                    print("⚠️ LLM quota exceeded - chuyển sang offline mode")
+                    print("\n🔴 CHUYỂN SANG CHẾ ĐỘ OFFLINE")
+                    print("💡 Vui lòng nhập rõ ràng hơn: 'ăn phở 30k', 'xóa phở', 'thống kê hôm nay'")
+                    _offline_warning_shown = True
+                _llm_available = False
+            else:
+                print(f"⚠️ LLM không khả dụng: {error_msg[:100]}...")
+                _llm_available = False
+                
+                if not _offline_warning_shown:
+                    print("\n🔴 CHUYỂN SANG CHẾ ĐỘ OFFLINE")
+                    print("💡 Vui lòng nhập rõ ràng hơn: 'ăn phở 30k', 'xóa phở', 'thống kê hôm nay'")
+                    _offline_warning_shown = True
             
             result = self._fallback_intent_analysis(user_message)
             result['offline_mode'] = True
@@ -302,12 +317,11 @@ class ExpenseExtractor:
     
     def extract_expense_info(self, user_message: str) -> Dict[str, Any]:
         """
-        Trích xuất thông tin chi tiêu từ câu chat của người dùng
-        Returns: Dict với keys: food_item, price, meal_time, confidence, transaction_type, account_type
+        Trích xuất thông tin chi tiêu từ tin nhắn của user
+        Returns: Dict với các keys: food_item, price, meal_time, confidence
         """
         global _llm_available
         
-        # Nếu offline, skip LLM ngay
         if not _llm_available or not self.llm:
             return self._fallback_extraction(user_message)
         
@@ -328,7 +342,12 @@ class ExpenseExtractor:
         
         Phân loại account_type:
         - "cash": tiền mặt, cash, tiền lẻ, tiền túi
-        - "account": tài khoản, ngân hàng, account, atm, banking, chuyển khoản
+        - "account": tài khoản, ngân hàng, account, atm, banking, chuyển khoản, ck, bank
+        
+        ĐẶC BIỆT CHÚ Ý:
+        - "cash" → account_type = "cash"
+        - "ck" → account_type = "account" (viết tắt chuyển khoản)
+        - "bank" → account_type = "account"
         
         Trả về kết quả theo định dạng JSON chính xác:
         {
@@ -347,16 +366,16 @@ class ExpenseExtractor:
         - Chỉ trả về JSON, không có text khác
         
         Ví dụ:
-        Input: "trưa ăn phở 35k"
+        Input: "trưa ăn phở 35k cash"
         Output: {"food_item": "phở", "price": 35000, "meal_time": "trưa", "transaction_type": "expense", "account_type": "cash", "confidence": 0.95}
         
         Input: "lãnh lương 5000k vào tài khoản"
         Output: {"food_item": "lương", "price": 5000000, "meal_time": null, "transaction_type": "income", "account_type": "account", "confidence": 0.9}
         
-        Input: "nhận tiền 2000k tiền mặt"
-        Output: {"food_item": "nhận tiền", "price": 2000000, "meal_time": null, "transaction_type": "income", "account_type": "cash", "confidence": 0.9}
+        Input: "ăn cơm 25k ck"
+        Output: {"food_item": "cơm", "price": 25000, "meal_time": null, "transaction_type": "expense", "account_type": "account", "confidence": 0.9}
         
-        Input: "chi tiêu 500k từ tài khoản"
+        Input: "chi tiêu 500k bank"
         Output: {"food_item": "chi tiêu", "price": 500000, "meal_time": null, "transaction_type": "expense", "account_type": "account", "confidence": 0.85}
         """
         
@@ -389,8 +408,17 @@ class ExpenseExtractor:
                 signal.alarm(0)
             
         except Exception as e:
-            print(f"Lỗi khi gọi LLM: {e}")
-            _llm_available = False
+            error_msg = str(e)
+            
+            # Handle quota errors quietly
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                if _llm_available:  # Only show once
+                    print("⚠️ LLM quota exceeded")
+                _llm_available = False
+            else:
+                print(f"⚠️ Lỗi khi gọi LLM: {error_msg[:50]}...")
+                _llm_available = False
+                
             # Fallback về rule-based parsing
             return self._fallback_extraction(user_message)
     
@@ -622,9 +650,13 @@ class ExpenseExtractor:
         if account_type not in ['cash', 'account']:
             # Phân tích từ original message  
             message_lower = original_message.lower()
-            account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'banking', 'chuyển khoản']
+            account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'banking', 'chuyển khoản', 'ck', 'bank']
+            cash_keywords = ['tiền mặt', 'cash', 'tiền lẻ', 'tiền túi']
+            
             if any(keyword in message_lower for keyword in account_keywords):
                 account_type = 'account'
+            elif any(keyword in message_lower for keyword in cash_keywords):
+                account_type = 'cash'
             else:
                 account_type = 'cash'
         
@@ -673,7 +705,7 @@ class ExpenseExtractor:
             confidence_boost += 0.1
         
         # Phân tích account_type
-        account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'banking', 'chuyển khoản', 'vào tài khoản']
+        account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'banking', 'chuyển khoản', 'vào tài khoản', 'ck', 'bank']
         cash_keywords = ['tiền mặt', 'cash', 'tiền lẻ', 'tiền túi']
         
         if any(keyword in message_lower for keyword in account_keywords):
@@ -779,14 +811,12 @@ class ExpenseExtractor:
         
         return result
     
-    def process_balance_update(self, message: str) -> Optional[Dict[str, float]]:
-        """
-        Xử lý câu lệnh cập nhật số dư
-        Returns: Dict với cash_amount/account_amount (để cộng/trừ) hoặc cash_balance/account_balance (để thiết lập), hoặc None
-        """
+    def _extract_balance_update_info(self, user_message: str) -> Optional[Dict[str, Any]]:
+        """Trích xuất thông tin cập nhật số dư từ tin nhắn"""
+        global _llm_available
         
-        if not self.llm:
-            return self._fallback_balance_update(message)
+        if not _llm_available or not self.llm:
+            return self._fallback_balance_update(user_message)
         
         system_prompt = """
         Bạn là chuyên gia phân tích câu lệnh cập nhật số dư tài chính.
@@ -838,17 +868,37 @@ class ExpenseExtractor:
             
             messages = [
                 SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Câu chat: '{message}'")
+                HumanMessage(content=f"Câu chat: '{user_message}'")
             ]
             
-            response = self.llm.invoke(messages)
-            response_text = response.content.strip()
+            # Gọi LLM với timeout ngắn
+            import signal
             
-            return self._parse_balance_response(response_text, message)
+            def timeout_handler(signum, frame):
+                raise TimeoutError("LLM timeout")
             
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(2)  # 2 giây timeout
+            
+            try:
+                response = self.llm.invoke(messages)
+                signal.alarm(0)
+                return self._parse_balance_response(response.content.strip(), user_message)
+            finally:
+                signal.alarm(0)
+                
         except Exception as e:
-            print(f"Lỗi xử lý balance update: {e}")
-            return self._fallback_balance_update(message)
+            error_msg = str(e)
+            
+            # Handle quota errors quietly
+            if "quota" in error_msg.lower() or "429" in error_msg:
+                if _llm_available:  # Only show once per session
+                    pass  # Don't show quota error again
+                _llm_available = False
+            else:
+                print(f"Lỗi xử lý balance update: {error_msg[:50]}...")
+                
+            return self._fallback_balance_update(user_message)
     
     def _parse_balance_response(self, response_text: str, original_message: str) -> Optional[Dict[str, float]]:
         """Parse response cho balance update"""

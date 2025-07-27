@@ -351,37 +351,71 @@ class Database:
             }
     
     def delete_most_recent_transaction(self, user_id: int = 1) -> Dict[str, Any]:
-        """
-        Xóa giao dịch gần nhất của user
-        Returns: Dict với thông tin kết quả
-        """
-        # Lấy giao dịch gần nhất
-        recent_transactions = self.get_recent_transactions(user_id=user_id, limit=1)
+        """Xóa giao dịch gần nhất"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-        if not recent_transactions:
+        try:
+            # Lấy giao dịch gần nhất TRƯỚC KHI xóa (để có đầy đủ thông tin cho balance reversal)
+            cursor.execute("""
+                SELECT id, food_item, price, meal_time, transaction_type, account_type,
+                       transaction_date, transaction_time, created_at
+                FROM transactions 
+                WHERE user_id = ?
+                ORDER BY transaction_date DESC, transaction_time DESC
+                LIMIT 1
+            """, (user_id,))
+            
+            row = cursor.fetchone()
+            
+            if row:
+                # Lấy đầy đủ thông tin transaction
+                transaction_info = {
+                    'id': row[0],
+                    'food_item': row[1],
+                    'price': row[2],
+                    'meal_time': row[3],
+                    'transaction_type': row[4] or 'expense',
+                    'account_type': row[5] or 'cash',
+                    'transaction_date': row[6],
+                    'transaction_time': row[7],
+                    'created_at': row[8]
+                }
+                
+                # Bây giờ mới xóa transaction
+                cursor.execute("DELETE FROM transactions WHERE id = ?", (row[0],))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    return {
+                        'success': True,
+                        'message': f"Đã xóa giao dịch gần nhất: {transaction_info['food_item']} - {transaction_info['price']:,.0f}đ",
+                        'deleted_transaction': transaction_info
+                    }
+                else:
+                    conn.rollback()
+                    return {
+                        'success': False,
+                        'message': "Không thể xóa giao dịch",
+                        'deleted_transaction': None
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': "Không có giao dịch nào để xóa",
+                    'deleted_transaction': None
+                }
+                
+        except Exception as e:
+            conn.rollback()
             return {
                 'success': False,
-                'message': 'Không có giao dịch nào để xóa',
+                'message': f"Lỗi khi xóa giao dịch: {str(e)}",
                 'deleted_transaction': None
             }
-        
-        # Xóa giao dịch gần nhất
-        transaction_to_delete = recent_transactions[0]
-        success = self.delete_transaction(transaction_to_delete['id'], user_id)
-        
-        if success:
-            return {
-                'success': True,
-                'message': f'Đã xóa giao dịch gần nhất: {transaction_to_delete["food_item"]} - {transaction_to_delete["price"]:,.0f}đ',
-                'deleted_transaction': transaction_to_delete
-            }
-        else:
-            return {
-                'success': False,
-                'message': 'Lỗi khi xóa giao dịch gần nhất',
-                'deleted_transaction': None
-            } 
-
+        finally:
+            conn.close()
+    
     def get_transaction_with_details(self, transaction_id: int) -> Optional[Dict[str, Any]]:
         """Lấy thông tin chi tiết giao dịch bao gồm transaction_type và account_type"""
         conn = sqlite3.connect(self.db_path)

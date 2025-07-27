@@ -551,7 +551,7 @@ def main():
     if args.stats_monthly:
         show_statistics('monthly') 
         return
-    
+
     # Default: Start interactive mode
     try:
         chatbot = ExpenseChatbot()

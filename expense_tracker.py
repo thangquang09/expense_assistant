@@ -51,7 +51,8 @@ class ExpenseTracker:
         elif intent == 'delete_expense':
             result = self._handle_expense_deletion(message)
         elif intent == 'update_balance':
-            balance_update = self.llm_processor.process_balance_update(message)
+            # Kiểm tra xem có phải là cập nhật số dư không
+            balance_update = self.llm_processor._extract_balance_update_info(message)
             if balance_update:
                 result = self._handle_balance_update(balance_update)
             else:
@@ -411,38 +412,42 @@ class ExpenseTracker:
     def _reverse_balance_for_deleted_transaction(self, deleted_transaction: Dict[str, Any]) -> bool:
         """Đảo ngược tác động của giao dịch bị xóa lên số dư"""
         try:
-            # Lấy thông tin chi tiết giao dịch
-            transaction_details = self.db.get_transaction_with_details(deleted_transaction['id'])
-            if not transaction_details:
-                # Fallback: sử dụng thông tin có sẵn (mặc định là expense, cash)
-                transaction_type = 'expense'
-                account_type = 'cash'
-            else:
-                transaction_type = transaction_details.get('transaction_type', 'expense')
-                account_type = transaction_details.get('account_type', 'cash')
-            
+            # Sử dụng thông tin từ deleted_transaction (đã có đầy đủ account_type và transaction_type)
+            transaction_type = deleted_transaction.get('transaction_type', 'expense')
+            account_type = deleted_transaction.get('account_type', 'cash')
             amount = deleted_transaction['price']
+            
+            print(f"🔍 Giao dịch bị xóa: {transaction_type} từ {account_type}")
             
             # Đảo ngược tác động
             if transaction_type == 'income':
-                # Thu nhập bị xóa -> trừ khỏi số dư
+                # Thu nhập bị xóa → trừ khỏi số dư
                 balance_change = -amount
+                print(f"💰➖ Thu nhập bị xóa: -{amount:,.0f}đ từ {account_type}")
             else:
-                # Chi tiêu bị xóa -> cộng vào số dư
+                # Chi tiêu bị xóa → cộng vào số dư
                 balance_change = amount
+                print(f"💸➕ Chi tiêu bị xóa: +{amount:,.0f}đ vào {account_type}")
             
-            # Cập nhật số dư theo loại tài khoản
+            # Cập nhật số dư theo ĐÚNG loại tài khoản
             if account_type == 'cash':
                 success = self.db.update_balance_by_amount(
                     user_id=self.current_user_id,
                     cash_amount=balance_change
                 )
+                print(f"💵 Cập nhật tiền mặt: {'+' if balance_change > 0 else ''}{balance_change:,.0f}đ")
             else:  # account
                 success = self.db.update_balance_by_amount(
                     user_id=self.current_user_id,
                     account_amount=balance_change
                 )
+                print(f"🏦 Cập nhật tài khoản: {'+' if balance_change > 0 else ''}{balance_change:,.0f}đ")
             
+            if success:
+                print("✅ Đã đảo ngược số dư thành công")
+            else:
+                print("❌ Lỗi đảo ngược số dư")
+                
             return success
             
         except Exception as e:
