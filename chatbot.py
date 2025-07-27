@@ -38,6 +38,8 @@ class ExpenseChatbot:
                 elif choice == "4":
                     self.show_balance()
                 elif choice == "5":
+                    self.show_google_sheets_menu()
+                elif choice == "6":
                     self.show_help()
                 elif choice == "0":
                     self.exit_app()
@@ -77,7 +79,8 @@ class ExpenseChatbot:
         menu_table.add_row("2. 📊 Thống kê chi tiêu")
         menu_table.add_row("3. 📝 Giao dịch gần đây") 
         menu_table.add_row("4. 💰 Quản lý số dư")
-        menu_table.add_row("5. ❓ Hướng dẫn")
+        menu_table.add_row("5. 📋 Google Sheets")
+        menu_table.add_row("6. ❓ Hướng dẫn")
         menu_table.add_row("0. 🚪 Thoát")
         
         self.console.print(Panel(menu_table, border_style="cyan"))
@@ -118,11 +121,225 @@ class ExpenseChatbot:
             self.display_chat_result(result)
             self.console.print("")
     
+    def show_google_sheets_menu(self):
+        """Hiển thị menu Google Sheets"""
+        self.clear_screen()
+        
+        # Kiểm tra trạng thái sync
+        sheets_sync = self.tracker.sheets_sync
+        
+        status_table = Table(show_header=True, header_style="bold cyan", box=box.DOUBLE)
+        status_table.add_column("📋 Google Sheets Status", style="cyan", width=25)
+        status_table.add_column("Trạng thái", style="green", width=20)
+        
+        if sheets_sync.enabled:
+            status_table.add_row("🔗 Kết nối", "[green]✅ Đã kích hoạt[/green]")
+            if sheets_sync.spreadsheet:
+                status_table.add_row("📊 Spreadsheet", sheets_sync.spreadsheet.title)
+                url = sheets_sync.get_spreadsheet_url()
+                if url:
+                    # Truncate URL for display
+                    display_url = url if len(url) < 40 else url[:37] + "..."
+                    status_table.add_row("🔗 URL", display_url)
+        else:
+            status_table.add_row("🔗 Kết nối", "[red]❌ Chưa kích hoạt[/red]")
+            status_table.add_row("📝 Cần thiết", "credentials.json")
+        
+        self.console.print(Panel(status_table, title="📋 GOOGLE SHEETS", border_style="cyan"))
+        self.console.print("")
+        
+        # Menu options
+        if sheets_sync.enabled:
+            options = [
+                "1. 📤 Export toàn bộ dữ liệu",
+                "2. 🔄 Test kết nối", 
+                "3. 📊 Mở Spreadsheet (URL)",
+                "4. ℹ️  Hướng dẫn sử dụng",
+                "0. 🔙 Quay về menu chính"
+            ]
+        else:
+            options = [
+                "1. 📝 Hướng dẫn setup",
+                "2. 🔄 Thử kết nối lại",
+                "0. 🔙 Quay về menu chính"
+            ]
+        
+        for option in options:
+            self.console.print(f"[cyan]{option}[/cyan]")
+        
+        self.console.print("")
+        choice = self.get_user_input("Lựa chọn của bạn")
+        
+        if sheets_sync.enabled:
+            if choice == "1":
+                self.export_to_sheets()
+            elif choice == "2":
+                self.test_sheets_connection()
+            elif choice == "3":
+                self.show_spreadsheet_url()
+            elif choice == "4":
+                self.show_sheets_help()
+            elif choice == "0":
+                return
+        else:
+            if choice == "1":
+                self.show_sheets_setup_guide()
+            elif choice == "2":
+                self.retry_sheets_connection()
+            elif choice == "0":
+                return
+        
+        if choice != "0":
+            self.pause()
+    
+    def export_to_sheets(self):
+        """Export dữ liệu lên Google Sheets"""
+        with self.console.status("[yellow]📤 Đang export dữ liệu...[/yellow]"):
+            result = self.tracker.export_to_sheets()
+        
+        if result['success']:
+            self.console.print(f"[green]{result['message']}[/green]")
+            if result.get('spreadsheet_url'):
+                self.console.print(f"[cyan]🔗 URL: {result['spreadsheet_url']}[/cyan]")
+        else:
+            self.console.print(f"[red]❌ {result['message']}[/red]")
+            if result.get('suggestion'):
+                self.console.print(f"[yellow]💡 {result['suggestion']}[/yellow]")
+    
+    def test_sheets_connection(self):
+        """Test kết nối Google Sheets"""
+        with self.console.status("[yellow]🔄 Đang test kết nối...[/yellow]"):
+            success = self.tracker.sheets_sync.test_connection()
+        
+        if success:
+            self.console.print("[green]✅ Kết nối Google Sheets thành công![/green]")
+        else:
+            self.console.print("[red]❌ Kết nối thất bại![/red]")
+            self.console.print("[yellow]💡 Kiểm tra credentials.json và internet[/yellow]")
+    
+    def show_spreadsheet_url(self):
+        """Hiển thị URL của spreadsheet"""
+        url = self.tracker.sheets_sync.get_spreadsheet_url()
+        if url:
+            self.console.print(f"[cyan]📊 Spreadsheet URL:[/cyan]")
+            self.console.print(f"[blue]{url}[/blue]")
+            self.console.print("\n[yellow]💡 Copy URL này để mở trong browser[/yellow]")
+        else:
+            self.console.print("[red]❌ Không thể lấy URL[/red]")
+    
+    def show_sheets_setup_guide(self):
+        """Hiển thị hướng dẫn setup Google Sheets"""
+        self.clear_screen()
+        
+        guide_text = """
+[bold cyan]📋 HƯỚNG DẪN SETUP GOOGLE SHEETS[/bold cyan]
+
+[yellow]Bước 1: Tạo Google Cloud Project[/yellow]
+• Truy cập: https://console.developers.google.com/
+• Tạo project mới hoặc chọn existing project
+• Enable Google Sheets API và Google Drive API
+
+[yellow]Bước 2: Tạo Service Account[/yellow]
+• Vào IAM & Admin > Service Accounts
+• Tạo Service Account mới
+• Download credentials JSON file
+• Đổi tên thành "credentials.json"
+
+[yellow]Bước 3: Cài đặt file[/yellow]
+• Copy credentials.json vào folder app này
+• Restart ứng dụng
+
+[yellow]Bước 4: Chia sẻ quyền (tùy chọn)[/yellow]
+• Nếu muốn access spreadsheet từ Google account khác
+• Share spreadsheet với email trong credentials.json
+
+[yellow]📝 File cần thiết:[/yellow]
+• credentials.json (trong folder app)
+
+[yellow]🔗 Links hữu ích:[/yellow]
+• Google Cloud Console: https://console.developers.google.com/
+• Google Sheets API: https://developers.google.com/sheets/api
+        """
+        
+        guide_panel = Panel(guide_text, title="📋 SETUP GUIDE", border_style="yellow")
+        self.console.print(guide_panel)
+    
+    def retry_sheets_connection(self):
+        """Thử kết nối lại Google Sheets"""
+        with self.console.status("[yellow]🔄 Đang thử kết nối lại...[/yellow]"):
+            # Re-initialize sheets sync
+            from google_sheets_sync import GoogleSheetsSync
+            self.tracker.sheets_sync = GoogleSheetsSync()
+        
+        if self.tracker.sheets_sync.enabled:
+            self.console.print("[green]✅ Kết nối thành công![/green]")
+        else:
+            self.console.print("[red]❌ Vẫn không thể kết nối[/red]")
+            self.console.print("[yellow]💡 Kiểm tra credentials.json file[/yellow]")
+    
+    def show_sheets_help(self):
+        """Hiển thị hướng dẫn sử dụng Google Sheets"""
+        self.clear_screen()
+        
+        help_text = """
+[bold cyan]📋 SỬ DỤNG GOOGLE SHEETS[/bold cyan]
+
+[yellow]🔄 Auto Sync:[/yellow]
+• Mỗi giao dịch mới sẽ tự động sync lên Sheets
+• Balance updates cũng được sync
+• Statistics được sync khi xem báo cáo
+
+[yellow]📊 Worksheets được tạo:[/yellow]
+• "Transactions": Danh sách tất cả giao dịch
+• "Balance": Lịch sử số dư theo thời gian  
+• "Statistics": Báo cáo thống kê định kỳ
+
+[yellow]📤 Export Manual:[/yellow]
+• Dùng "Export toàn bộ dữ liệu" để sync tất cả
+• Hữu ích sau khi xóa giao dịch
+• Hoặc khi muốn backup toàn bộ
+
+[yellow]📈 Phân tích dữ liệu:[/yellow]
+• Tạo charts/graphs trong Google Sheets
+• Pivot tables để phân tích trend
+• Chia sẻ báo cáo với người khác
+
+[yellow]💡 Tips:[/yellow]
+• Không sửa trực tiếp trên Sheets (có thể bị ghi đè)
+• Dùng Sheets để view và analyze
+• App vẫn là source of truth chính
+        """
+        
+        help_panel = Panel(help_text, title="📋 GOOGLE SHEETS HELP", border_style="cyan")
+        self.console.print(help_panel)
+    
     def display_chat_result(self, result: Dict[str, Any]):
         """Hiển thị kết quả xử lý chat"""
+        
+        # Hiển thị cảnh báo offline mode nếu có
+        if result.get('offline_mode', False):
+            offline_panel = Panel(
+                "🔴 CHẾ ĐỘ OFFLINE\n"
+                "🌐 Không có kết nối internet hoặc API\n"
+                "💡 Vui lòng nhập rõ ràng: 'ăn phở 30k', 'xóa phở', 'thống kê hôm nay'",
+                title="⚠️ Offline Mode",
+                border_style="red"
+            )
+            self.console.print(offline_panel)
+            self.console.print("")
+        
         if result['success']:
             # Hiển thị thông báo thành công
-            self.console.print(f"[green]{result['message']}[/green]")
+            message = result['message']
+            if result.get('synced_to_sheets', False):
+                message += " 📋"  # Indicator cho sync
+            self.console.print(f"[green]{message}[/green]")
+            
+            # Hiển thị sync status nếu có
+            if result.get('synced_to_sheets', False):
+                self.console.print("[dim]📋 Đã sync lên Google Sheets[/dim]")
+            elif result.get('note'):
+                self.console.print(f"[yellow]💡 {result['note']}[/yellow]")
             
             # Hiển thị thống kê chi tiêu nếu có
             if 'statistics' in result:
@@ -147,6 +364,53 @@ class ExpenseChatbot:
                     title = "📊 Thống kê chi tiêu"
                 
                 self.console.print(Panel(stats_table, title=title, border_style=border_color))
+            
+            # Hiển thị thống kê chi tiết nếu có
+            if 'statistics_detailed' in result:
+                stats = result['statistics_detailed']
+                
+                # Bảng thống kê chi tiết
+                detail_table = Table(show_header=True, header_style="bold magenta", box=box.DOUBLE)
+                detail_table.add_column("📋 Chi tiết", style="magenta", width=20)
+                detail_table.add_column("Giá trị", style="cyan", justify="right", width=20)
+                
+                detail_table.add_row("📅 Thời gian", stats['period'])
+                detail_table.add_row("💸 Tổng chi tiêu", f"{stats['total_spent']:,.0f}đ")
+                detail_table.add_row("🔢 Số giao dịch", f"{stats['transaction_count']} lần")
+                
+                if stats['transaction_count'] > 0:
+                    detail_table.add_row("📊 Trung bình/lần", f"{stats['avg_spent']:,.0f}đ")
+                    detail_table.add_row("📉 Thấp nhất", f"{stats['min_spent']:,.0f}đ")
+                    detail_table.add_row("📈 Cao nhất", f"{stats['max_spent']:,.0f}đ")
+                
+                # Thêm indicator cho offline mode và sync status
+                indicators = []
+                if result.get('offline_mode', False):
+                    indicators.append("offline")
+                if result.get('synced_to_sheets', False):
+                    indicators.append("📋 synced")
+                
+                title = "📊 Thống kê chi tiết"
+                if indicators:
+                    title += f" ({', '.join(indicators)})"
+                
+                self.console.print(Panel(detail_table, title=title, border_style="magenta"))
+                
+                # Hiển thị giao dịch gần đây nếu có
+                if stats['recent_transactions']:
+                    recent_table = Table(show_header=True, header_style="bold yellow", box=box.SIMPLE)
+                    recent_table.add_column("🕐 Ngày", style="yellow", width=12)
+                    recent_table.add_column("🍽️ Món", style="green", width=15)
+                    recent_table.add_column("💰 Giá", style="cyan", justify="right", width=12)
+                    
+                    for trans in stats['recent_transactions']:
+                        recent_table.add_row(
+                            trans['transaction_date'],
+                            trans['food_item'],
+                            f"{trans['price']:,.0f}đ"
+                        )
+                    
+                    self.console.print(Panel(recent_table, title="🕐 Giao dịch gần đây", border_style="yellow"))
             
             # Hiển thị thông tin cập nhật số dư nếu có 
             if 'balance' in result:
@@ -253,16 +517,26 @@ class ExpenseChatbot:
         help_text = """
 [bold cyan]🎯 HƯỚNG DẪN SỬ DỤNG[/bold cyan]
 
-[yellow]💬 Ghi chi tiêu:[/yellow]
-• "trưa ăn phở 35k" - Ghi chi tiêu có thời gian
-• "mua cà phê 25000" - Ghi chi tiêu không có thời gian  
-• "ăn bún chả 40 nghìn" - Số tiền bằng chữ
-• "tối ăn cơm 50k" - Bữa ăn + món + giá
+ [yellow]💬 Ghi chi tiêu:[/yellow]
+ • "trưa ăn phở 35k" - Ghi chi tiêu có thời gian
+ • "mua cà phê 25000" - Ghi chi tiêu không có thời gian  
+ • "ăn bún chả 40 nghìn" - Số tiền bằng chữ
+ • "tối ăn cơm 50k" - Bữa ăn + món + giá
 
-[yellow]💰 Cập nhật số dư:[/yellow]  
-• "cập nhật tiền mặt 500k" - Cập nhật tiền mặt
-• "tài khoản còn 2 triệu" - Cập nhật tài khoản ngân hàng
-• "tiền mặt 100k, tài khoản 1 triệu" - Cập nhật cả hai
+ [yellow]🗑️ Xóa giao dịch:[/yellow]
+ • "xóa giao dịch phở" - Xóa giao dịch gần nhất có phở
+ • "xóa phở 30k" - Xóa giao dịch phở với giá cụ thể
+ • "hủy ăn bánh" - Xóa giao dịch ăn bánh
+
+ [yellow]📊 Xem thống kê:[/yellow]
+ • "thống kê hôm nay" - Xem chi tiêu hôm nay
+ • "chi tiêu tuần này" - Xem chi tiêu 7 ngày
+ • "báo cáo 5 ngày" - Xem chi tiêu 5 ngày qua
+ • "tổng chi tiêu" - Xem tổng quan (mặc định tuần)
+
+ [yellow]💰 Cập nhật số dư:[/yellow]  
+ • "cập nhật tiền mặt 500k" - Cập nhật tiền mặt
+ • "tài khoản còn 2 triệu" - Cập nhật tài khoản ngân hàng
 
  [yellow]📊 Xem thông tin:[/yellow]
  • Menu 2: Thống kê chi tiêu theo thời gian

@@ -2,4 +2,7 @@ langchain==0.1.0
 langchain-google-genai==0.0.8
 python-dotenv==1.0.0
 colorama==0.4.6
-rich==13.7.0 
+rich==13.7.0
+gspread==6.0.0
+google-auth==2.23.0
+oauth2client==4.1.3 
