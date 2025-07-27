@@ -51,13 +51,15 @@ expense_add sáng uống cà phê 25k
 ```bash
 expense -d "xóa phở"       # Xóa giao dịch phở gần nhất
 expense -d "xóa phở 30k"   # Xóa phở với giá cụ thể
-expense -d "xóa cà phê"    # Xóa giao dịch cà phê
-expense -d "hủy bánh mì"   # Xóa giao dịch bánh mì
+expense -d                 # Xóa giao dịch gần nhất (mới!)
+expense -d "xóa"           # Xóa giao dịch gần nhất
+expense -d "gần nhất"      # Xóa giao dịch gần nhất
 ```
 
 #### **Cách 2: Dùng alias ngắn**
 ```bash
 ed "xóa phở"               # ed = expense delete
+ed                         # Xóa giao dịch gần nhất (siêu nhanh!)
 edel "xóa cà phê 25k"      # alternative
 ```
 
@@ -65,6 +67,7 @@ edel "xóa cà phê 25k"      # alternative
 ```bash
 expense_delete xóa phở     # Function tiện lợi
 expense_delete phở         # Có thể bỏ từ "xóa"
+expense_delete ""          # Xóa giao dịch gần nhất
 ```
 
 ### 📊 **Statistics - Xem Thống Kê Nhanh**
@@ -118,9 +121,12 @@ esd                        # Xem tổng chi tiêu hôm nay
 
 ### **🗑️ Khi Cần Sửa/Xóa:**
 ```bash
-ed "xóa phở"               # Xóa giao dịch sai
+ed                         # Xóa giao dịch gần nhất (siêu nhanh!)
 ea "trưa ăn bún 40k"       # Thêm lại đúng
 esd                        # Check lại thống kê
+
+# Hoặc xóa cụ thể:
+ed "xóa phở"               # Xóa giao dịch sai cụ thể
 ```
 
 ### **📅 Cuối Tuần:**
@@ -159,6 +165,11 @@ ea "phở 35k"               # Không cần thời gian
 ea "trưa phở 35k"          # Không cần "ăn"
 ea "trưa ăn phở 35000"     # Số đầy đủ
 ea "trưa ăn phở 35 nghìn"  # Bằng chữ
+
+# Delete shortcuts:
+ed                         # Xóa giao dịch gần nhất
+ed "xóa"                   # Tương tự như trên
+ed "gần nhất"              # Tương tự như trên
 ```
 
 ---

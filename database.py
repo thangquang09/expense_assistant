@@ -288,4 +288,36 @@ class Database:
                 'success': False,
                 'message': 'Lỗi khi xóa giao dịch',
                 'deleted_transaction': None
+            }
+    
+    def delete_most_recent_transaction(self, user_id: int = 1) -> Dict[str, Any]:
+        """
+        Xóa giao dịch gần nhất của user
+        Returns: Dict với thông tin kết quả
+        """
+        # Lấy giao dịch gần nhất
+        recent_transactions = self.get_recent_transactions(user_id=user_id, limit=1)
+        
+        if not recent_transactions:
+            return {
+                'success': False,
+                'message': 'Không có giao dịch nào để xóa',
+                'deleted_transaction': None
+            }
+        
+        # Xóa giao dịch gần nhất
+        transaction_to_delete = recent_transactions[0]
+        success = self.delete_transaction(transaction_to_delete['id'], user_id)
+        
+        if success:
+            return {
+                'success': True,
+                'message': f'Đã xóa giao dịch gần nhất: {transaction_to_delete["food_item"]} - {transaction_to_delete["price"]:,.0f}đ',
+                'deleted_transaction': transaction_to_delete
+            }
+        else:
+            return {
+                'success': False,
+                'message': 'Lỗi khi xóa giao dịch gần nhất',
+                'deleted_transaction': None
             } 

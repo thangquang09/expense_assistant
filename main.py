@@ -31,6 +31,7 @@ Examples:
   %(prog)s -a "trưa ăn phở 30k"         # Quick add expense
   %(prog)s --append "sáng uống cà phê 25k"
   %(prog)s -d "xóa phở"                 # Quick delete transaction
+  %(prog)s -d                           # Delete most recent transaction
   %(prog)s --delete "xóa phở 30k"       # Delete with specific price
   %(prog)s -sd                          # Today's statistics
   %(prog)s -sw                          # This week's statistics
@@ -50,7 +51,9 @@ Examples:
     group.add_argument(
         '-d', '--delete',
         metavar='DELETE_QUERY',
-        help='Quickly delete a transaction (e.g., "xóa phở", "xóa phở 30k")'
+        nargs='?',  # Make argument optional
+        const='xóa',  # Default value when -d is used without argument
+        help='Quickly delete a transaction (e.g., "xóa phở", "xóa phở 30k", or just -d to delete most recent)'
     )
     
     group.add_argument(
@@ -79,7 +82,12 @@ def quick_delete_transaction(delete_query: str):
     console = Console()
     tracker = ExpenseTracker()
     
-    console.print(f"[yellow]🗑️ Đang xóa: {delete_query}[/yellow]")
+    # Xử lý trường hợp empty string hoặc chỉ có whitespace
+    if not delete_query.strip():
+        delete_query = "xóa"  # Convert empty to "xóa" keyword
+        console.print("[yellow]🗑️ Xóa giao dịch gần nhất...[/yellow]")
+    else:
+        console.print(f"[yellow]🗑️ Đang xóa: {delete_query}[/yellow]")
     
     # Process the delete request
     result = tracker.process_user_message(delete_query)

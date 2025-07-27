@@ -188,14 +188,60 @@ class ExpenseTracker:
     def _handle_expense_deletion(self, message: str) -> Dict[str, Any]:
         """Xử lý việc xóa giao dịch"""
         try:
-            # Trích xuất thông tin giao dịch cần xóa
+            # Kiểm tra các trường hợp đặc biệt để xóa giao dịch gần nhất
+            message_clean = message.strip().lower()
+            
+            # Các từ khóa để xóa giao dịch gần nhất
+            recent_keywords = ['xóa', 'gần nhất', 'recent', 'last', 'latest', '']
+            
+            # Nếu chỉ là từ khóa đơn giản, xóa giao dịch gần nhất
+            if (message_clean in recent_keywords or 
+                message_clean == 'xóa giao dịch gần nhất' or
+                message_clean == 'xóa gần nhất' or
+                len(message_clean) == 0):
+                
+                # Xóa giao dịch gần nhất
+                delete_result = self.db.delete_most_recent_transaction(self.current_user_id)
+                
+                if delete_result['success']:
+                    # Lấy thống kê sau khi xóa
+                    today_summary = self.db.get_spending_summary(self.current_user_id, 1)
+                    week_summary = self.db.get_spending_summary(self.current_user_id, 7)
+                    
+                    return {
+                        'success': True,
+                        'message': f"🗑️ {delete_result['message']}",
+                        'deleted_info': {
+                            'food_item': delete_result['deleted_transaction']['food_item'],
+                            'price': delete_result['deleted_transaction']['price'],
+                            'meal_time': delete_result['deleted_transaction'].get('meal_time'),
+                            'confidence': 1.0  # 100% confident vì xóa chính xác
+                        },
+                        'deleted_transaction': delete_result['deleted_transaction'],
+                        'statistics': {
+                            'today_total': today_summary['total_spent'] or 0,
+                            'today_count': today_summary['transaction_count'],
+                            'week_total': week_summary['total_spent'] or 0,
+                            'week_count': week_summary['transaction_count'],
+                            'deleted_amount': delete_result['deleted_transaction']['price']
+                        },
+                        'note': 'Đã xóa giao dịch gần nhất'
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'message': f"❌ {delete_result['message']}",
+                        'suggestion': "Không có giao dịch nào để xóa"
+                    }
+            
+            # Trường hợp bình thường: trích xuất thông tin từ LLM
             delete_info = self.llm_processor.extract_delete_info(message)
             
             if delete_info['confidence'] < 0.4:
                 return {
                     'success': False,
                     'message': f"Không thể hiểu rõ giao dịch cần xóa. Độ tin cậy: {delete_info['confidence']:.2f}",
-                    'suggestion': "Vui lòng thử: 'xóa [món ăn]' hoặc 'xóa [món ăn] [giá]'"
+                    'suggestion': "Vui lòng thử: 'xóa [món ăn]', 'xóa [món ăn] [giá]', hoặc chỉ 'xóa' để xóa giao dịch gần nhất"
                 }
             
             # Xóa giao dịch từ database
@@ -232,7 +278,7 @@ class ExpenseTracker:
                 return {
                     'success': False,
                     'message': f"❌ {delete_result['message']}",
-                    'suggestion': "Kiểm tra lại tên món ăn hoặc xem danh sách giao dịch gần đây"
+                    'suggestion': "Kiểm tra lại tên món ăn hoặc xem danh sách giao dịch gần đây. Hoặc chỉ gõ 'xóa' để xóa giao dịch gần nhất."
                 }
                 
         except Exception as e:
