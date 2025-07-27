@@ -33,12 +33,25 @@ class Database:
                 food_item TEXT NOT NULL,
                 price REAL NOT NULL,
                 meal_time TEXT,
+                transaction_type TEXT DEFAULT 'expense',
+                account_type TEXT DEFAULT 'cash',
                 transaction_date DATE NOT NULL,
                 transaction_time TIME NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
+        
+        # Migration: Add new columns if they don't exist
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN transaction_type TEXT DEFAULT 'expense'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+            
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN account_type TEXT DEFAULT 'cash'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         # Tạo user mặc định nếu chưa có
         cursor.execute("SELECT COUNT(*) FROM users")
@@ -53,27 +66,74 @@ class Database:
     
     def add_transaction(self, user_id: int, food_item: str, price: float, 
                        meal_time: Optional[str] = None, 
-                       transaction_date: Optional[str] = None,
-                       transaction_time: Optional[str] = None) -> int:
-        """Thêm giao dịch mới"""
+                       transaction_type: str = 'expense',
+                       account_type: str = 'cash') -> int:
+        """
+        Thêm giao dịch mới
+        transaction_type: 'expense' (chi tiêu) hoặc 'income' (thu nhập)
+        account_type: 'cash' (tiền mặt) hoặc 'account' (tài khoản ngân hàng)
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        if not transaction_date:
-            transaction_date = datetime.date.today().isoformat()
-        if not transaction_time:
-            transaction_time = datetime.datetime.now().time().isoformat()
+        now = datetime.datetime.now()
+        today = now.date().isoformat()  # Convert to string
+        current_time = now.time().isoformat()  # Convert to string
         
         cursor.execute("""
-            INSERT INTO transactions (user_id, food_item, price, meal_time, transaction_date, transaction_time)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, food_item, price, meal_time, transaction_date, transaction_time))
+            INSERT INTO transactions (user_id, food_item, price, meal_time, 
+                                    transaction_type, account_type, transaction_date, transaction_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, food_item, price, meal_time, transaction_type, account_type, today, current_time))
         
         transaction_id = cursor.lastrowid
         conn.commit()
         conn.close()
         
         return transaction_id
+    
+    def update_balance_by_amount(self, user_id: int, 
+                                cash_amount: Optional[float] = None,
+                                account_amount: Optional[float] = None) -> bool:
+        """
+        Cộng/trừ số dư (thay vì thay thế)
+        cash_amount: số tiền cộng/trừ vào tiền mặt (có thể âm)
+        account_amount: số tiền cộng/trừ vào tài khoản (có thể âm)
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Lấy số dư hiện tại
+            current_balance = self.get_user_balance(user_id)
+            
+            # Tính số dư mới
+            new_cash = current_balance['cash_balance']
+            new_account = current_balance['account_balance']
+            
+            if cash_amount is not None:
+                new_cash += cash_amount
+                
+            if account_amount is not None:
+                new_account += account_amount
+            
+            # Cập nhật số dư
+            cursor.execute("""
+                UPDATE users 
+                SET cash_balance = ?, account_balance = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (new_cash, new_account, user_id))
+            
+            affected_rows = cursor.rowcount
+            conn.commit()
+            
+            return affected_rows > 0
+            
+        except Exception as e:
+            print(f"Lỗi cập nhật số dư: {e}")
+            return False
+        finally:
+            conn.close()
     
     def get_user_balance(self, user_id: int = 1) -> Dict[str, float]:
         """Lấy số dư của người dùng"""
@@ -321,3 +381,34 @@ class Database:
                 'message': 'Lỗi khi xóa giao dịch gần nhất',
                 'deleted_transaction': None
             } 
+
+    def get_transaction_with_details(self, transaction_id: int) -> Optional[Dict[str, Any]]:
+        """Lấy thông tin chi tiết giao dịch bao gồm transaction_type và account_type"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, user_id, food_item, price, meal_time, transaction_type, account_type,
+                   transaction_date, transaction_time, created_at
+            FROM transactions 
+            WHERE id = ?
+        """, (transaction_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                'id': row[0],
+                'user_id': row[1], 
+                'food_item': row[2],
+                'price': row[3],
+                'meal_time': row[4],
+                'transaction_type': row[5] or 'expense',
+                'account_type': row[6] or 'cash',
+                'transaction_date': row[7],
+                'transaction_time': row[8],
+                'created_at': row[9]
+            }
+        
+        return None 

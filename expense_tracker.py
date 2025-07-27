@@ -96,13 +96,18 @@ class ExpenseTracker:
                     'suggestion': "Vui lòng thử lại với format: '[thời gian] ăn/uống [món] [giá]' (VD: 'trưa ăn phở 35k')"
                 }
             
-            # Thêm vào database (chỉ để thống kê)
+            # Thêm vào database với transaction_type và account_type
             transaction_id = self.db.add_transaction(
                 user_id=self.current_user_id,
                 food_item=expense_info['food_item'],
                 price=expense_info['price'],
-                meal_time=expense_info['meal_time']
+                meal_time=expense_info['meal_time'],
+                transaction_type=expense_info.get('transaction_type', 'expense'),
+                account_type=expense_info.get('account_type', 'cash')
             )
+            
+            # Tự động cập nhật số dư
+            balance_updated = self._auto_update_balance(expense_info)
             
             # Lấy thống kê nhanh
             today_summary = self.db.get_spending_summary(self.current_user_id, 1)  # Hôm nay
@@ -125,11 +130,25 @@ class ExpenseTracker:
                 except Exception as e:
                     print(f"⚠️ Lỗi sync to Sheets: {e}")
             
+            # Tạo thông điệp phản hồi
+            transaction_type = expense_info.get('transaction_type', 'expense')
+            account_type = expense_info.get('account_type', 'cash')
+            
+            if transaction_type == 'income':
+                action_icon = "💰"
+                action_text = "Đã ghi nhận thu nhập"
+            else:
+                action_icon = "💸"  
+                action_text = "Đã ghi nhận chi tiêu"
+            
+            account_text = "tiền mặt" if account_type == 'cash' else "tài khoản"
+            
             return {
                 'success': True,
                 'transaction_id': transaction_id,
-                'message': f"✅ Đã ghi nhận: {expense_info['food_item']} - {expense_info['price']:,.0f}đ",
+                'message': f"{action_icon} {action_text}: {expense_info['food_item']} - {expense_info['price']:,.0f}đ ({account_text})",
                 'expense_info': expense_info,
+                'balance_updated': balance_updated,
                 'statistics': {
                     'today_total': today_summary['total_spent'] or 0,
                     'today_count': today_summary['transaction_count'],
@@ -147,14 +166,69 @@ class ExpenseTracker:
                 'error': str(e)
             }
     
+    def _auto_update_balance(self, transaction_info: Dict[str, Any]) -> bool:
+        """Tự động cập nhật số dư dựa trên giao dịch"""
+        try:
+            transaction_type = transaction_info.get('transaction_type', 'expense')
+            account_type = transaction_info.get('account_type', 'cash')
+            amount = transaction_info['price']
+            
+            # Xác định số tiền cộng/trừ
+            if transaction_type == 'income':
+                # Thu nhập -> cộng vào số dư
+                balance_change = amount
+            else:
+                # Chi tiêu -> trừ khỏi số dư  
+                balance_change = -amount
+            
+            # Cập nhật số dư theo loại tài khoản
+            if account_type == 'cash':
+                success = self.db.update_balance_by_amount(
+                    user_id=self.current_user_id,
+                    cash_amount=balance_change
+                )
+            else:  # account
+                success = self.db.update_balance_by_amount(
+                    user_id=self.current_user_id,
+                    account_amount=balance_change
+                )
+            
+            return success
+            
+        except Exception as e:
+            print(f"⚠️ Lỗi cập nhật số dư tự động: {e}")
+            return False
+    
     def _handle_balance_update(self, balance_update: Dict[str, float]) -> Dict[str, Any]:
         """Xử lý việc cập nhật số dư"""
         try:
-            success = self.db.update_user_balance(
-                user_id=self.current_user_id,
-                cash_balance=balance_update.get('cash_balance'),
-                account_balance=balance_update.get('account_balance')
-            )
+            # Phân biệt giữa SET (thiết lập) và ADD (cộng/trừ)
+            is_set_operation = 'cash_balance' in balance_update or 'account_balance' in balance_update
+            is_add_operation = 'cash_amount' in balance_update or 'account_amount' in balance_update
+            
+            if is_set_operation:
+                # SET Operation: Thiết lập số dư về giá trị cụ thể
+                success = self.db.update_user_balance(
+                    user_id=self.current_user_id,
+                    cash_balance=balance_update.get('cash_balance'),
+                    account_balance=balance_update.get('account_balance')
+                )
+                operation_type = "set"
+                
+            elif is_add_operation:
+                # ADD Operation: Cộng/trừ vào số dư hiện tại
+                success = self.db.update_balance_by_amount(
+                    user_id=self.current_user_id,
+                    cash_amount=balance_update.get('cash_amount'),
+                    account_amount=balance_update.get('account_amount')
+                )
+                operation_type = "add"
+                
+            else:
+                return {
+                    'success': False,
+                    'message': "❌ Không xác định được loại thao tác cập nhật số dư"
+                }
             
             if success:
                 current_balance = self.db.get_user_balance(self.current_user_id)
@@ -166,11 +240,49 @@ class ExpenseTracker:
                     except Exception as e:
                         print(f"⚠️ Lỗi sync balance to Sheets: {e}")
                 
+                # Tạo thông điệp mô tả thay đổi
+                changes = []
+                
+                if operation_type == "set":
+                    # Thông báo thiết lập số dư
+                    if balance_update.get('cash_balance') is not None:
+                        amount = balance_update['cash_balance']
+                        changes.append(f"Tiền mặt = {amount:,.0f}đ")
+                        
+                    if balance_update.get('account_balance') is not None:
+                        amount = balance_update['account_balance']
+                        changes.append(f"Tài khoản = {amount:,.0f}đ")
+                    
+                    action_icon = "🔄"
+                    action_text = "Đã thiết lập số dư"
+                    
+                else:
+                    # Thông báo cộng/trừ số dư
+                    if balance_update.get('cash_amount') is not None:
+                        amount = balance_update['cash_amount']
+                        if amount > 0:
+                            changes.append(f"Tiền mặt +{amount:,.0f}đ")
+                        else:
+                            changes.append(f"Tiền mặt {amount:,.0f}đ")
+                            
+                    if balance_update.get('account_amount') is not None:
+                        amount = balance_update['account_amount']
+                        if amount > 0:
+                            changes.append(f"Tài khoản +{amount:,.0f}đ")
+                        else:
+                            changes.append(f"Tài khoản {amount:,.0f}đ")
+                    
+                    action_icon = "💰"
+                    action_text = "Đã cập nhật số dư"
+                
+                change_text = ", ".join(changes)
+                
                 return {
                     'success': True,
-                    'message': "✅ Đã cập nhật số dư",
+                    'message': f"{action_icon} {action_text}: {change_text}",
                     'balance': current_balance,
                     'updated_fields': balance_update,
+                    'operation_type': operation_type,
                     'synced_to_sheets': self.sheets_sync.enabled
                 }
             else:
@@ -204,6 +316,9 @@ class ExpenseTracker:
                 delete_result = self.db.delete_most_recent_transaction(self.current_user_id)
                 
                 if delete_result['success']:
+                    # Tự động cập nhật số dư (đảo ngược giao dịch)
+                    balance_updated = self._reverse_balance_for_deleted_transaction(delete_result['deleted_transaction'])
+                    
                     # Lấy thống kê sau khi xóa
                     today_summary = self.db.get_spending_summary(self.current_user_id, 1)
                     week_summary = self.db.get_spending_summary(self.current_user_id, 7)
@@ -218,6 +333,7 @@ class ExpenseTracker:
                             'confidence': 1.0  # 100% confident vì xóa chính xác
                         },
                         'deleted_transaction': delete_result['deleted_transaction'],
+                        'balance_updated': balance_updated,
                         'statistics': {
                             'today_total': today_summary['total_spent'] or 0,
                             'today_count': today_summary['transaction_count'],
@@ -225,7 +341,7 @@ class ExpenseTracker:
                             'week_count': week_summary['transaction_count'],
                             'deleted_amount': delete_result['deleted_transaction']['price']
                         },
-                        'note': 'Đã xóa giao dịch gần nhất'
+                        'note': 'Đã xóa giao dịch gần nhất và cập nhật số dư'
                     }
                 else:
                     return {
@@ -253,6 +369,9 @@ class ExpenseTracker:
             )
             
             if delete_result['success']:
+                # Tự động cập nhật số dư (đảo ngược giao dịch)
+                balance_updated = self._reverse_balance_for_deleted_transaction(delete_result['deleted_transaction'])
+                
                 # Lấy thống kê sau khi xóa
                 today_summary = self.db.get_spending_summary(self.current_user_id, 1)
                 week_summary = self.db.get_spending_summary(self.current_user_id, 7)
@@ -265,6 +384,7 @@ class ExpenseTracker:
                     'message': f"🗑️ {delete_result['message']}",
                     'deleted_info': delete_info,
                     'deleted_transaction': delete_result['deleted_transaction'],
+                    'balance_updated': balance_updated,
                     'statistics': {
                         'today_total': today_summary['total_spent'] or 0,
                         'today_count': today_summary['transaction_count'],
@@ -287,6 +407,47 @@ class ExpenseTracker:
                 'message': f"Lỗi xử lý xóa giao dịch: {str(e)}",
                 'error': str(e)
             }
+    
+    def _reverse_balance_for_deleted_transaction(self, deleted_transaction: Dict[str, Any]) -> bool:
+        """Đảo ngược tác động của giao dịch bị xóa lên số dư"""
+        try:
+            # Lấy thông tin chi tiết giao dịch
+            transaction_details = self.db.get_transaction_with_details(deleted_transaction['id'])
+            if not transaction_details:
+                # Fallback: sử dụng thông tin có sẵn (mặc định là expense, cash)
+                transaction_type = 'expense'
+                account_type = 'cash'
+            else:
+                transaction_type = transaction_details.get('transaction_type', 'expense')
+                account_type = transaction_details.get('account_type', 'cash')
+            
+            amount = deleted_transaction['price']
+            
+            # Đảo ngược tác động
+            if transaction_type == 'income':
+                # Thu nhập bị xóa -> trừ khỏi số dư
+                balance_change = -amount
+            else:
+                # Chi tiêu bị xóa -> cộng vào số dư
+                balance_change = amount
+            
+            # Cập nhật số dư theo loại tài khoản
+            if account_type == 'cash':
+                success = self.db.update_balance_by_amount(
+                    user_id=self.current_user_id,
+                    cash_amount=balance_change
+                )
+            else:  # account
+                success = self.db.update_balance_by_amount(
+                    user_id=self.current_user_id,
+                    account_amount=balance_change
+                )
+            
+            return success
+            
+        except Exception as e:
+            print(f"⚠️ Lỗi đảo ngược số dư: {e}")
+            return False
     
     def _handle_statistics_request(self, message: str) -> Dict[str, Any]:
         """Xử lý yêu cầu xem thống kê"""

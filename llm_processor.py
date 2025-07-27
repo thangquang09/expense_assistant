@@ -303,7 +303,7 @@ class ExpenseExtractor:
     def extract_expense_info(self, user_message: str) -> Dict[str, Any]:
         """
         Trích xuất thông tin chi tiêu từ câu chat của người dùng
-        Returns: Dict với keys: food_item, price, meal_time, confidence
+        Returns: Dict với keys: food_item, price, meal_time, confidence, transaction_type, account_type
         """
         global _llm_available
         
@@ -313,18 +313,30 @@ class ExpenseExtractor:
         
         # System prompt để hướng dẫn LLM
         system_prompt = """
-        Bạn là một chuyên gia trích xuất thông tin chi tiêu từ văn bản tiếng Việt.
+        Bạn là một chuyên gia trích xuất thông tin tài chính từ văn bản tiếng Việt.
         
         Từ câu chat của người dùng, hãy trích xuất:
-        1. food_item: Tên món ăn/đồ uống (bắt buộc)
+        1. food_item: Tên món ăn/đồ uống/mô tả giao dịch (bắt buộc)
         2. price: Giá tiền bằng số (bắt buộc) 
         3. meal_time: Thời điểm ăn (sáng, trưa, chiều, tối, hoặc giờ cụ thể nếu có)
+        4. transaction_type: Loại giao dịch - "expense" (chi tiêu) hoặc "income" (thu nhập)
+        5. account_type: Loại tài khoản - "cash" (tiền mặt) hoặc "account" (tài khoản ngân hàng)
+        
+        Phân loại transaction_type:
+        - "income": lãnh lương, nhận tiền, thu nhập, được trả, tiền thưởng, tiền lương, lương, salary
+        - "expense": ăn, uống, mua, chi tiêu, trả tiền, mất tiền, tiêu, spend
+        
+        Phân loại account_type:
+        - "cash": tiền mặt, cash, tiền lẻ, tiền túi
+        - "account": tài khoản, ngân hàng, account, atm, banking, chuyển khoản
         
         Trả về kết quả theo định dạng JSON chính xác:
         {
-            "food_item": "tên món ăn",
+            "food_item": "tên món ăn hoặc mô tả",
             "price": số_tiền_số,
             "meal_time": "thời_điểm_ăn hoặc null",
+            "transaction_type": "expense hoặc income",
+            "account_type": "cash hoặc account", 
             "confidence": 0.9
         }
         
@@ -336,10 +348,16 @@ class ExpenseExtractor:
         
         Ví dụ:
         Input: "trưa ăn phở 35k"
-        Output: {"food_item": "phở", "price": 35000, "meal_time": "trưa", "confidence": 0.95}
+        Output: {"food_item": "phở", "price": 35000, "meal_time": "trưa", "transaction_type": "expense", "account_type": "cash", "confidence": 0.95}
         
-        Input: "mua cà phê 25000"
-        Output: {"food_item": "cà phê", "price": 25000, "meal_time": null, "confidence": 0.9}
+        Input: "lãnh lương 5000k vào tài khoản"
+        Output: {"food_item": "lương", "price": 5000000, "meal_time": null, "transaction_type": "income", "account_type": "account", "confidence": 0.9}
+        
+        Input: "nhận tiền 2000k tiền mặt"
+        Output: {"food_item": "nhận tiền", "price": 2000000, "meal_time": null, "transaction_type": "income", "account_type": "cash", "confidence": 0.9}
+        
+        Input: "chi tiêu 500k từ tài khoản"
+        Output: {"food_item": "chi tiêu", "price": 500000, "meal_time": null, "transaction_type": "expense", "account_type": "account", "confidence": 0.85}
         """
         
         try:
@@ -562,7 +580,7 @@ class ExpenseExtractor:
                     break
             
             if not food_item:
-                food_item = 'món ăn'  # Default fallback
+                food_item = 'giao dịch'  # Default fallback
         
         # Đảm bảo có price hợp lệ  
         price = result.get('price', 0)
@@ -588,15 +606,42 @@ class ExpenseExtractor:
         if meal_time and not isinstance(meal_time, str):
             meal_time = None
         
+        # Đảm bảo transaction_type hợp lệ
+        transaction_type = result.get('transaction_type', 'expense')
+        if transaction_type not in ['expense', 'income']:
+            # Phân tích từ original message
+            message_lower = original_message.lower()
+            income_keywords = ['lãnh', 'lương', 'nhận', 'thu', 'được', 'thưởng', 'salary', 'income']
+            if any(keyword in message_lower for keyword in income_keywords):
+                transaction_type = 'income'
+            else:
+                transaction_type = 'expense'
+        
+        # Đảm bảo account_type hợp lệ
+        account_type = result.get('account_type', 'cash')
+        if account_type not in ['cash', 'account']:
+            # Phân tích từ original message  
+            message_lower = original_message.lower()
+            account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'banking', 'chuyển khoản']
+            if any(keyword in message_lower for keyword in account_keywords):
+                account_type = 'account'
+            else:
+                account_type = 'cash'
+        
         # Tính confidence dựa trên chất lượng data
         confidence = result.get('confidence', 0.5)
-        if result.get('food_item') != food_item or result.get('price') != price:
+        if (result.get('food_item') != food_item or 
+            result.get('price') != price or
+            result.get('transaction_type') != transaction_type or
+            result.get('account_type') != account_type):
             confidence = max(confidence - 0.2, 0.3)  # Penalty cho fix
         
         return {
             'food_item': food_item,
             'price': float(price),
             'meal_time': meal_time,
+            'transaction_type': transaction_type,
+            'account_type': account_type,
             'confidence': min(max(confidence, 0.0), 1.0),
             'offline_mode': False
         }
@@ -607,6 +652,8 @@ class ExpenseExtractor:
             'food_item': '',
             'price': 0.0,
             'meal_time': None,
+            'transaction_type': 'expense',  # Default
+            'account_type': 'cash',  # Default
             'confidence': 0.3,  # Base confidence cho fallback
             'offline_mode': True  # Flag để nhận biết offline mode
         }
@@ -614,7 +661,30 @@ class ExpenseExtractor:
         message_lower = message.lower()
         confidence_boost = 0.0
         
+        # Phân tích transaction_type
+        income_keywords = ['lãnh', 'lương', 'nhận', 'thu', 'được', 'thưởng', 'salary', 'income', 'tiền lương']
+        expense_keywords = ['ăn', 'uống', 'mua', 'chi', 'tiêu', 'trả', 'spend']
+        
+        if any(keyword in message_lower for keyword in income_keywords):
+            result['transaction_type'] = 'income'
+            confidence_boost += 0.1
+        elif any(keyword in message_lower for keyword in expense_keywords):
+            result['transaction_type'] = 'expense'
+            confidence_boost += 0.1
+        
+        # Phân tích account_type
+        account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'banking', 'chuyển khoản', 'vào tài khoản']
+        cash_keywords = ['tiền mặt', 'cash', 'tiền lẻ', 'tiền túi']
+        
+        if any(keyword in message_lower for keyword in account_keywords):
+            result['account_type'] = 'account'
+            confidence_boost += 0.1
+        elif any(keyword in message_lower for keyword in cash_keywords):
+            result['account_type'] = 'cash'
+            confidence_boost += 0.1
+        
         # Tìm giá tiền
+        import re
         price_patterns = [
             r'(\d+)k\b',  # 35k
             r'(\d+)000\b',  # 35000
@@ -647,7 +717,7 @@ class ExpenseExtractor:
                 confidence_boost += 0.15  # Có thời gian rõ ràng
                 break
         
-        # Tìm món ăn - enhanced logic
+        # Tìm món ăn/mô tả giao dịch - enhanced logic
         food_keywords = ['ăn', 'uống', 'mua', 'order', 'gọi']
         words = message.split()
         
@@ -666,35 +736,39 @@ class ExpenseExtractor:
             if result['food_item']:
                 break
         
-        # Strategy 2: Nếu chưa tìm được, tìm từ có ý nghĩa
+        # Strategy 2: Tìm mô tả cho giao dịch thu nhập
+        if not result['food_item'] and result['transaction_type'] == 'income':
+            income_descriptions = ['lương', 'thưởng', 'thu nhập', 'tiền lương', 'nhận tiền']
+            for desc in income_descriptions:
+                if desc in message_lower:
+                    result['food_item'] = desc
+                    confidence_boost += 0.15
+                    break
+        
+        # Strategy 3: Nếu chưa tìm được, tìm từ có ý nghĩa
         if not result['food_item']:
             for word in words:
                 word_clean = re.sub(r'\d+k?', '', word.lower()).strip()
                 # Loại bỏ các từ thời gian và action
-                skip_words = ['sáng', 'trưa', 'chiều', 'tối', 'ăn', 'uống', 'mua', 'order', 'gọi', 'buổi']
+                skip_words = ['sáng', 'trưa', 'chiều', 'tối', 'ăn', 'uống', 'mua', 'order', 'gọi', 'buổi', 
+                             'lãnh', 'nhận', 'từ', 'vào', 'tài', 'khoản', 'tiền', 'mặt']
                 if word_clean not in skip_words and len(word_clean) > 2:
                     result['food_item'] = word_clean
-                    confidence_boost += 0.1  # Có món ăn nhưng không chắc chắn
+                    confidence_boost += 0.1  # Có từ nhưng không chắc chắn
                     break
         
-        # Strategy 3: Fallback - lấy từ đầu tiên không phải keyword
+        # Strategy 4: Fallback - mô tả chung
         if not result['food_item']:
-            for word in words:
-                word_lower = word.lower()
-                if (word_lower not in ['sáng', 'trưa', 'chiều', 'tối', 'ăn', 'uống', 'mua'] 
-                    and not re.search(r'\d+k?', word_lower) and len(word) > 2):
-                    result['food_item'] = word
-                    break
-        
-        if not result['food_item']:
-            result['food_item'] = 'Không xác định'
-            confidence_boost -= 0.1  # Penalty cho không tìm được món
+            if result['transaction_type'] == 'income':
+                result['food_item'] = 'thu nhập'
+            else:
+                result['food_item'] = 'chi tiêu'
         
         # Điều chỉnh confidence dựa trên số lượng thông tin tìm được
         final_confidence = result['confidence'] + confidence_boost
         
         # Bonus cho input có format hoàn chỉnh
-        if result['price'] > 0 and result['food_item'] != 'Không xác định':
+        if result['price'] > 0 and result['food_item'] not in ['thu nhập', 'chi tiêu']:
             if result['meal_time']:
                 final_confidence += 0.1  # Perfect match: có đủ cả 3 yếu tố
             else:
@@ -708,35 +782,55 @@ class ExpenseExtractor:
     def process_balance_update(self, message: str) -> Optional[Dict[str, float]]:
         """
         Xử lý câu lệnh cập nhật số dư
-        Returns: Dict với cash_balance và/hoặc account_balance, hoặc None nếu không phải lệnh cập nhật
+        Returns: Dict với cash_amount/account_amount (để cộng/trừ) hoặc cash_balance/account_balance (để thiết lập), hoặc None
         """
         
         if not self.llm:
-            return None  # Tạm thời không hỗ trợ offline cho balance update
+            return self._fallback_balance_update(message)
         
         system_prompt = """
         Bạn là chuyên gia phân tích câu lệnh cập nhật số dư tài chính.
         
         Từ câu chat, xác định xem có phải là lệnh cập nhật số dư không và trích xuất:
-        1. cash_balance: Số dư tiền mặt (nếu có)
-        2. account_balance: Số dư tài khoản ngân hàng (nếu có)
+        
+        CÓ 2 LOẠI THAO TÁC:
+        1. THIẾT LẬP (SET): Đặt số dư về một giá trị cụ thể (thay thế hoàn toàn)
+        2. CỘNG/TRỪ (ADD): Cộng/trừ vào số dư hiện tại
+        
+        PHÂN LOẠI THEO TỪ KHÓA:
+        
+        THIẾT LẬP (SET) - dùng cash_balance/account_balance:
+        - "cập nhật lại", "chỉ có", "là", "thành", "đặt lại", "reset", "thiết lập"
+        - "số dư tài khoản là 1500k", "cập nhật lại tiền mặt 200k"
+        
+        CỘNG/TRỪ (ADD) - dùng cash_amount/account_amount:  
+        - "lãnh lương", "nhận tiền", "thu nhập", "chi tiêu", "mất tiền", "cộng thêm", "trừ đi"
+        - "lãnh lương 2000k", "chi tiêu 500k"
         
         Trả về JSON:
         {
             "is_balance_update": true/false,
-            "cash_balance": số_tiền_hoặc_null,
-            "account_balance": số_tiền_hoặc_null
+            "operation_type": "set" hoặc "add",
+            "cash_balance": số_tiền_thiết_lập_hoặc_null (cho SET),
+            "account_balance": số_tiền_thiết_lập_hoặc_null (cho SET),
+            "cash_amount": số_tiền_cộng_trừ_hoặc_null (cho ADD),
+            "account_amount": số_tiền_cộng_trừ_hoặc_null (cho ADD),
+            "description": "mô tả ngắn gọn"
         }
         
-        Từ khóa cho tiền mặt: "tiền mặt", "cash", "tiền lẻ"
-        Từ khóa cho tài khoản: "tài khoản", "ngân hàng", "account", "atm"
+        VÍ DỤ THIẾT LẬP (SET):
+        Input: "cập nhật lại số dư tài khoản chỉ có 1560k"
+        Output: {"is_balance_update": true, "operation_type": "set", "cash_balance": null, "account_balance": 1560000, "cash_amount": null, "account_amount": null, "description": "Thiết lập số dư tài khoản"}
         
-        Ví dụ:
-        Input: "cập nhật tiền mặt 500k"
-        Output: {"is_balance_update": true, "cash_balance": 500000, "account_balance": null}
+        Input: "tiền mặt là 300k"
+        Output: {"is_balance_update": true, "operation_type": "set", "cash_balance": 300000, "account_balance": null, "cash_amount": null, "account_amount": null, "description": "Thiết lập tiền mặt"}
         
-        Input: "tài khoản còn 2 triệu"
-        Output: {"is_balance_update": true, "cash_balance": null, "account_balance": 2000000}
+        VÍ DỤ CỘNG/TRỪ (ADD):
+        Input: "lãnh lương 5000k vào tài khoản"
+        Output: {"is_balance_update": true, "operation_type": "add", "cash_balance": null, "account_balance": null, "cash_amount": null, "account_amount": 5000000, "description": "Lãnh lương vào tài khoản"}
+        
+        Input: "chi tiêu 500k từ tài khoản"
+        Output: {"is_balance_update": true, "operation_type": "add", "cash_balance": null, "account_balance": null, "cash_amount": null, "account_amount": -500000, "description": "Chi tiêu từ tài khoản"}
         """
         
         try:
@@ -750,8 +844,19 @@ class ExpenseExtractor:
             response = self.llm.invoke(messages)
             response_text = response.content.strip()
             
-            # Parse response
+            return self._parse_balance_response(response_text, message)
+            
+        except Exception as e:
+            print(f"Lỗi xử lý balance update: {e}")
+            return self._fallback_balance_update(message)
+    
+    def _parse_balance_response(self, response_text: str, original_message: str) -> Optional[Dict[str, float]]:
+        """Parse response cho balance update"""
+        try:
             import json
+            
+            # Làm sạch response
+            response_text = response_text.strip()
             if response_text.startswith('```json'):
                 response_text = response_text[7:]
             if response_text.endswith('```'):
@@ -761,17 +866,103 @@ class ExpenseExtractor:
             
             if result.get('is_balance_update', False):
                 balance_update = {}
-                if result.get('cash_balance') is not None:
-                    balance_update['cash_balance'] = float(result['cash_balance'])
-                if result.get('account_balance') is not None:
-                    balance_update['account_balance'] = float(result['account_balance'])
+                operation_type = result.get('operation_type', 'add')
+                
+                if operation_type == 'set':
+                    # Thiết lập số dư (thay thế)
+                    if result.get('cash_balance') is not None:
+                        balance_update['cash_balance'] = float(result['cash_balance'])
+                    if result.get('account_balance') is not None:
+                        balance_update['account_balance'] = float(result['account_balance'])
+                else:
+                    # Cộng/trừ số dư (add/subtract)
+                    if result.get('cash_amount') is not None:
+                        balance_update['cash_amount'] = float(result['cash_amount'])
+                    if result.get('account_amount') is not None:
+                        balance_update['account_amount'] = float(result['account_amount'])
                 
                 return balance_update if balance_update else None
             
         except Exception as e:
-            print(f"Lỗi xử lý balance update: {e}")
+            print(f"Lỗi parse balance response: {e}")
+            return self._fallback_balance_update(original_message)
         
         return None
+    
+    def _fallback_balance_update(self, message: str) -> Optional[Dict[str, float]]:
+        """Fallback xử lý balance update cho chế độ offline"""
+        message_lower = message.lower()
+        
+        # Kiểm tra có phải balance update không
+        balance_keywords = ['cập nhật', 'update', 'tiền mặt', 'tài khoản', 'lãnh lương', 'nhận tiền', 'chi tiêu']
+        if not any(keyword in message_lower for keyword in balance_keywords):
+            return None
+        
+        # Phân loại operation type
+        set_keywords = ['cập nhật lại', 'chỉ có', 'là', 'thành', 'đặt lại', 'reset', 'thiết lập']
+        add_keywords = ['lãnh', 'lương', 'nhận', 'thu', 'được', 'thưởng', 'chi', 'tiêu', 'mất', 'trả']
+        
+        is_set_operation = any(keyword in message_lower for keyword in set_keywords)
+        is_add_operation = any(keyword in message_lower for keyword in add_keywords)
+        
+        # Tìm số tiền
+        import re
+        amount = 0
+        price_patterns = [r'(\d+)k\b', r'(\d+)000\b', r'(\d+)\s*nghìn\b', r'(\d+)\s*triệu\b']
+        for pattern in price_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                amount_str = match.group(1)
+                if 'triệu' in pattern:
+                    amount = float(amount_str) * 1000000
+                elif 'k' in pattern or 'nghìn' in pattern:
+                    amount = float(amount_str) * 1000
+                else:
+                    amount = float(amount_str)
+                break
+        
+        if amount <= 0:
+            return None
+        
+        # Xác định loại tài khoản
+        account_keywords = ['tài khoản', 'ngân hàng', 'account', 'atm', 'vào tài khoản']
+        cash_keywords = ['tiền mặt', 'cash', 'tiền lẻ', 'tiền túi']
+        
+        is_account = any(keyword in message_lower for keyword in account_keywords)
+        is_cash = any(keyword in message_lower for keyword in cash_keywords)
+        
+        balance_update = {}
+        
+        if is_set_operation:
+            # Thiết lập số dư (SET)
+            if is_account and not is_cash:
+                balance_update['account_balance'] = amount
+            elif is_cash and not is_account:
+                balance_update['cash_balance'] = amount
+            else:
+                # Mặc định là tiền mặt nếu không rõ
+                balance_update['cash_balance'] = amount
+        else:
+            # Cộng/trừ số dư (ADD)
+            # Xác định cộng hay trừ
+            income_keywords = ['lãnh', 'lương', 'nhận', 'thu', 'được', 'thưởng', 'cập nhật', 'còn', 'có']
+            expense_keywords = ['chi', 'tiêu', 'mất', 'trả', 'spend']
+            
+            is_income = any(keyword in message_lower for keyword in income_keywords)
+            is_expense = any(keyword in message_lower for keyword in expense_keywords)
+            
+            if is_expense and not is_income:
+                amount = -amount  # Chi tiêu thì âm
+            
+            if is_account and not is_cash:
+                balance_update['account_amount'] = amount
+            elif is_cash and not is_account:
+                balance_update['cash_amount'] = amount
+            else:
+                # Mặc định là tiền mặt nếu không rõ
+                balance_update['cash_amount'] = amount
+        
+        return balance_update if balance_update else None
     
     def extract_statistics_info(self, user_message: str) -> Dict[str, Any]:
         """
