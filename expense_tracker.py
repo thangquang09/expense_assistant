@@ -24,57 +24,39 @@ class ExpenseTracker:
         Returns: Dict chứa kết quả xử lý và thông tin phản hồi
         """
         
-        # Bước 1: Phân tích intent
+        # Kiểm tra intent trước
         intent_result = self.query_analyzer.analyze_intent(message)
+        intent = intent_result.get('intent', 'unknown')
         
-        # Check offline mode
-        offline_mode = intent_result.get('offline_mode', False)
-        
-        if intent_result['confidence'] < 0.3:  # Giảm threshold cho offline mode
-            suggestion = "Vui lòng thử lại với: 'ăn/uống [món] [giá]' hoặc 'xóa [món]'"
-            if offline_mode:
-                suggestion += "\n🔴 Chế độ offline: Vui lòng nhập rõ ràng hơn"
-            
-            return {
-                'success': False,
-                'message': f"Không hiểu rõ ý định của bạn. {intent_result['analysis']}",
-                'suggestion': suggestion,
-                'offline_mode': offline_mode
-            }
-        
-        # Bước 2: Xử lý theo intent
-        intent = intent_result['intent']
-        
-        result = None
+        # Xử lý theo intent
         if intent == 'add_expense':
             result = self._handle_expense_entry(message)
         elif intent == 'delete_expense':
             result = self._handle_expense_deletion(message)
         elif intent == 'update_balance':
-            # Kiểm tra xem có phải là cập nhật số dư không
-            balance_update = self.llm_processor._extract_balance_update_info(message)
+            # Chỉ gọi balance extraction nếu không phải offline mode
+            if not intent_result.get('offline_mode', False):
+                balance_update = self.llm_processor._extract_balance_update_info(message)
+            else:
+                # Skip LLM và dùng fallback trực tiếp
+                balance_update = self.llm_processor._fallback_balance_update(message)
+                
             if balance_update:
                 result = self._handle_balance_update(balance_update)
             else:
                 result = {
                     'success': False,
-                    'message': 'Không thể xử lý lệnh cập nhật số dư'
+                    'message': '❌ Không thể xử lý yêu cầu cập nhật số dư',
+                    'data': None
                 }
         elif intent == 'view_statistics':
             result = self._handle_statistics_request(message)
         else:
-            suggestion = "Thử: 'ăn phở 30k', 'xóa phở', 'thống kê hôm nay'"
-            if offline_mode:
-                suggestion += "\n🔴 Chế độ offline: Nhập chính xác hơn"
-            
-            result = {
-                'success': False,
-                'message': f"Chưa hỗ trợ loại yêu cầu này: {intent_result['analysis']}",
-                'suggestion': suggestion
-            }
+            # Fallback: thử extract expense info
+            result = self._handle_expense_entry(message)
         
         # Thêm thông tin offline mode vào result
-        if result and offline_mode:
+        if result and intent_result.get('offline_mode', False):
             result['offline_mode'] = True
             if result.get('success', False):
                 result['message'] = f"🔴 {result['message']} (offline mode)"

@@ -878,7 +878,7 @@ class ExpenseExtractor:
                 raise TimeoutError("LLM timeout")
             
             signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(2)  # 2 giây timeout
+            signal.alarm(3)  # 3 giây timeout (tăng từ 2s để consistent với expense)
             
             try:
                 response = self.llm.invoke(messages)
@@ -890,13 +890,18 @@ class ExpenseExtractor:
         except Exception as e:
             error_msg = str(e)
             
-            # Handle quota errors quietly
+            # Handle quota errors quietly (consistent với expense handling)
             if "quota" in error_msg.lower() or "429" in error_msg:
                 if _llm_available:  # Only show once per session
-                    pass  # Don't show quota error again
+                    print("⚠️ LLM quota exceeded")
+                _llm_available = False
+            elif "timeout" in error_msg.lower():
+                # Handle timeout specifically
+                if _llm_available:
+                    print("⚠️ LLM timeout - chuyển sang fallback")
                 _llm_available = False
             else:
-                print(f"Lỗi xử lý balance update: {error_msg[:50]}...")
+                print(f"⚠️ Lỗi xử lý balance update: {error_msg[:50]}...")
                 
             return self._fallback_balance_update(user_message)
     
