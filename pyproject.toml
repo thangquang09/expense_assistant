@@ -1,0 +1,13 @@
+[project]
+name = "thangq-assistant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "colorama>=0.4.6",
+    "langchain>=0.3.27",
+    "langchain-google-genai>=2.1.8",
+    "python-dotenv>=1.1.1",
+    "rich>=14.1.0",
+]
