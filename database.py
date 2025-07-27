@@ -1,6 +1,6 @@
 import sqlite3
 import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 class Database:
@@ -412,3 +412,252 @@ class Database:
             }
         
         return None 
+
+    def get_daily_transactions(self, user_id: int = 1, target_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lấy TẤT CẢ giao dịch trong một ngày cụ thể"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        if not target_date:
+            target_date = datetime.date.today().isoformat()
+        
+        cursor.execute("""
+            SELECT id, food_item, price, meal_time, transaction_type, account_type,
+                   transaction_date, transaction_time, created_at
+            FROM transactions 
+            WHERE user_id = ? AND transaction_date = ?
+            ORDER BY transaction_time DESC
+        """, (user_id, target_date))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        transactions = []
+        for row in rows:
+            transactions.append({
+                'id': row[0],
+                'food_item': row[1],
+                'price': row[2],
+                'meal_time': row[3],
+                'transaction_type': row[4] or 'expense',
+                'account_type': row[5] or 'cash',
+                'transaction_date': row[6],
+                'transaction_time': row[7],
+                'created_at': row[8]
+            })
+        
+        return transactions
+    
+    def get_weekly_summary_by_days(self, user_id: int = 1, days: int = 7) -> List[Dict[str, Any]]:
+        """Lấy tổng chi tiêu theo từng ngày trong tuần qua"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Lấy days ngày gần nhất
+        end_date = datetime.date.today()
+        start_date = end_date - datetime.timedelta(days=days-1)
+        
+        cursor.execute("""
+            SELECT transaction_date, 
+                   SUM(CASE WHEN transaction_type = 'expense' THEN price ELSE 0 END) as total_expense,
+                   SUM(CASE WHEN transaction_type = 'income' THEN price ELSE 0 END) as total_income,
+                   COUNT(*) as transaction_count
+            FROM transactions 
+            WHERE user_id = ? AND transaction_date BETWEEN ? AND ?
+            GROUP BY transaction_date
+            ORDER BY transaction_date DESC
+        """, (user_id, start_date.isoformat(), end_date.isoformat()))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Tạo dict để dễ lookup
+        data_by_date = {}
+        for row in rows:
+            data_by_date[row[0]] = {
+                'date': row[0],
+                'total_expense': row[1] or 0,
+                'total_income': row[2] or 0,
+                'transaction_count': row[3]
+            }
+        
+        # Đảm bảo có đủ days ngày (kể cả ngày không có giao dịch)
+        result = []
+        for i in range(days):
+            check_date = end_date - datetime.timedelta(days=i)
+            date_str = check_date.isoformat()
+            
+            if date_str in data_by_date:
+                result.append(data_by_date[date_str])
+            else:
+                result.append({
+                    'date': date_str,
+                    'total_expense': 0,
+                    'total_income': 0,
+                    'transaction_count': 0
+                })
+        
+        return result
+    
+    def get_monthly_summary_by_weeks(self, user_id: int = 1) -> List[Dict[str, Any]]:
+        """Lấy tổng chi tiêu theo từng tuần trong tháng"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Lấy 4 tuần gần nhất (28 ngày)
+        end_date = datetime.date.today()
+        start_date = end_date - datetime.timedelta(days=27)  # 4 tuần = 28 ngày
+        
+        cursor.execute("""
+            SELECT transaction_date,
+                   SUM(CASE WHEN transaction_type = 'expense' THEN price ELSE 0 END) as total_expense,
+                   SUM(CASE WHEN transaction_type = 'income' THEN price ELSE 0 END) as total_income,
+                   COUNT(*) as transaction_count
+            FROM transactions 
+            WHERE user_id = ? AND transaction_date BETWEEN ? AND ?
+            GROUP BY transaction_date
+            ORDER BY transaction_date
+        """, (user_id, start_date.isoformat(), end_date.isoformat()))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Nhóm theo tuần
+        weeks = []
+        current_week = {'start_date': None, 'end_date': None, 'total_expense': 0, 'total_income': 0, 'transaction_count': 0}
+        
+        for i in range(4):  # 4 tuần
+            week_start = start_date + datetime.timedelta(days=i*7)
+            week_end = week_start + datetime.timedelta(days=6)
+            
+            week_expense = 0
+            week_income = 0 
+            week_count = 0
+            
+            for row in rows:
+                row_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                if week_start <= row_date <= week_end:
+                    week_expense += row[1]
+                    week_income += row[2]
+                    week_count += row[3]
+            
+            weeks.append({
+                'week_num': i + 1,
+                'start_date': week_start.isoformat(),
+                'end_date': week_end.isoformat(),
+                'total_expense': week_expense,
+                'total_income': week_income,
+                'transaction_count': week_count
+            })
+        
+        return weeks
+    
+    def get_monthly_summary_by_days(self, user_id: int = 1, days: int = 30) -> List[Dict[str, Any]]:
+        """Lấy tổng chi tiêu theo từng ngày trong tháng (cho biểu đồ)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        end_date = datetime.date.today()
+        start_date = end_date - datetime.timedelta(days=days-1)
+        
+        cursor.execute("""
+            SELECT transaction_date,
+                   SUM(CASE WHEN transaction_type = 'expense' THEN price ELSE 0 END) as total_expense,
+                   SUM(CASE WHEN transaction_type = 'income' THEN price ELSE 0 END) as total_income,
+                   COUNT(*) as transaction_count
+            FROM transactions 
+            WHERE user_id = ? AND transaction_date BETWEEN ? AND ?
+            GROUP BY transaction_date
+            ORDER BY transaction_date
+        """, (user_id, start_date.isoformat(), end_date.isoformat()))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Tạo dict để dễ lookup
+        data_by_date = {}
+        for row in rows:
+            data_by_date[row[0]] = {
+                'date': row[0],
+                'total_expense': row[1] or 0,
+                'total_income': row[2] or 0,
+                'transaction_count': row[3]
+            }
+        
+        # Đảm bảo có đủ days ngày
+        result = []
+        for i in range(days):
+            check_date = start_date + datetime.timedelta(days=i)
+            date_str = check_date.isoformat()
+            
+            if date_str in data_by_date:
+                result.append(data_by_date[date_str])
+            else:
+                result.append({
+                    'date': date_str,
+                    'total_expense': 0,
+                    'total_income': 0,
+                    'transaction_count': 0
+                })
+        
+        return result 
+
+    def get_current_month_summary_by_days(self, user_id: int = 1) -> List[Dict[str, Any]]:
+        """Lấy tổng chi tiêu theo từng ngày trong THÁNG HIỆN TẠI (từ ngày 1 đến cuối tháng)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Lấy ngày đầu và cuối tháng hiện tại
+        today = datetime.date.today()
+        start_date = today.replace(day=1)  # Ngày 1 của tháng hiện tại
+        
+        # Tìm ngày cuối tháng
+        if today.month == 12:
+            next_month = today.replace(year=today.year + 1, month=1, day=1)
+        else:
+            next_month = today.replace(month=today.month + 1, day=1)
+        end_date = next_month - datetime.timedelta(days=1)  # Ngày cuối tháng hiện tại
+        
+        cursor.execute("""
+            SELECT transaction_date,
+                   SUM(CASE WHEN transaction_type = 'expense' THEN price ELSE 0 END) as total_expense,
+                   SUM(CASE WHEN transaction_type = 'income' THEN price ELSE 0 END) as total_income,
+                   COUNT(*) as transaction_count
+            FROM transactions 
+            WHERE user_id = ? AND transaction_date BETWEEN ? AND ?
+            GROUP BY transaction_date
+            ORDER BY transaction_date
+        """, (user_id, start_date.isoformat(), end_date.isoformat()))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Tạo dict để dễ lookup
+        data_by_date = {}
+        for row in rows:
+            data_by_date[row[0]] = {
+                'date': row[0],
+                'total_expense': row[1] or 0,
+                'total_income': row[2] or 0,
+                'transaction_count': row[3]
+            }
+        
+        # Đảm bảo có đủ tất cả ngày trong tháng
+        result = []
+        current_date = start_date
+        while current_date <= end_date:
+            date_str = current_date.isoformat()
+            
+            if date_str in data_by_date:
+                result.append(data_by_date[date_str])
+            else:
+                result.append({
+                    'date': date_str,
+                    'total_expense': 0,
+                    'total_income': 0,
+                    'transaction_count': 0
+                })
+            
+            current_date += datetime.timedelta(days=1)
+        
+        return result 

@@ -18,6 +18,7 @@ from rich.table import Table
 from rich import box
 from chatbot import ExpenseChatbot
 from expense_tracker import ExpenseTracker
+import datetime
 
 
 def create_parser():
@@ -182,70 +183,347 @@ def quick_add_expense(expense_text: str):
 
 
 def show_statistics(period: str):
-    """Hiển thị thống kê nhanh"""
+    """Hiển thị thống kê theo thời gian với giao diện cải tiến"""
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich import box
+    
     console = Console()
-    tracker = ExpenseTracker()
     
-    # Map period to days and message
-    period_config = {
-        'daily': {'days': 1, 'title': 'HÔM NAY', 'emoji': '📅'},
-        'weekly': {'days': 7, 'title': 'TUẦN NÀY', 'emoji': '📆'}, 
-        'monthly': {'days': 30, 'title': 'THÁNG NÀY', 'emoji': '📊'}
-    }
-    
-    config = period_config[period]
-    console.print(f"[yellow]🔍 Lấy thống kê {config['title'].lower()}...[/yellow]")
-    
-    # Get statistics
-    summary = tracker.db.get_spending_summary(tracker.current_user_id, config['days'])
-    recent_transactions = tracker.db.get_recent_transactions(tracker.current_user_id, 5)
-    balance = tracker.get_balance_summary()
-    
-    # Create main statistics table
-    stats_table = Table(show_header=True, header_style="bold cyan", box=box.DOUBLE)
-    stats_table.add_column(f"{config['emoji']} Thống kê", style="cyan", width=25)
-    stats_table.add_column("Giá trị", style="green", justify="right", width=20)
-    
-    stats_table.add_row("📅 Thời gian", config['title'])
-    stats_table.add_row("💸 Tổng chi tiêu", f"{summary['total_spent'] or 0:,.0f}đ")
-    stats_table.add_row("🔢 Số giao dịch", f"{summary['transaction_count']} lần")
-    
-    if summary['transaction_count'] > 0:
-        stats_table.add_row("📊 Trung bình/lần", f"{summary['avg_spent'] or 0:,.0f}đ")
-        stats_table.add_row("📉 Thấp nhất", f"{summary['min_spent'] or 0:,.0f}đ")
-        stats_table.add_row("📈 Cao nhất", f"{summary['max_spent'] or 0:,.0f}đ")
-    
-    console.print(Panel(stats_table, title=f"📊 THỐNG KÊ {config['title']}", border_style="cyan"))
-    
-    # Show balance
-    balance_table = Table(show_header=False, box=box.SIMPLE, border_style="green")
-    balance_table.add_column("", style="green", width=20)
-    balance_table.add_column("", style="yellow", justify="right", width=15)
-    
-    balance_table.add_row("💵 Tiền mặt", f"{balance['cash_balance']:,.0f}đ")
-    balance_table.add_row("🏦 Tài khoản", f"{balance['account_balance']:,.0f}đ")
-    balance_table.add_row("💰 Tổng cộng", f"[bold]{balance['total_balance']:,.0f}đ[/bold]")
-    
-    console.print(Panel(balance_table, title="💰 SỐ DƯ HIỆN TẠI", border_style="green"))
-    
-    # Show recent transactions if any
-    if recent_transactions and summary['transaction_count'] > 0:
-        recent_table = Table(show_header=True, header_style="bold yellow", box=box.SIMPLE)
-        recent_table.add_column("Ngày", style="yellow", width=12)
-        recent_table.add_column("Món", style="green", width=15)
-        recent_table.add_column("Giá", style="cyan", justify="right", width=12)
-        recent_table.add_column("Bữa", style="magenta", width=8)
+    try:
+        tracker = ExpenseTracker()
+        balance = tracker.db.get_user_balance()
         
-        # Show max 3 recent transactions
-        for trans in recent_transactions[:3]:
-            recent_table.add_row(
-                trans['transaction_date'],
-                trans['food_item'],
-                f"{trans['price']:,.0f}đ",
-                trans['meal_time'] or ""
-            )
+        if period == "daily":
+            console.print("🔍 Lấy thống kê hôm nay...")
+            
+            # Lấy tổng thống kê ngày
+            summary = tracker.db.get_spending_summary(1, 1)
+            
+            # Lấy TẤT CẢ giao dịch trong ngày
+            daily_transactions = tracker.db.get_daily_transactions()
+            
+            # Tạo bảng thống kê tổng quan
+            stats_table = Table(box=box.DOUBLE_EDGE)
+            stats_table.add_column("📅 Thống kê", style="cyan")
+            stats_table.add_column("Giá trị", style="green", justify="right")
+            
+            stats_table.add_row("📅 Thời gian", "HÔM NAY")
+            stats_table.add_row("💸 Tổng chi tiêu", f"{summary['total_spent']:,.0f}đ" if summary['total_spent'] else "0đ")
+            stats_table.add_row("🔢 Số giao dịch", f"{summary['transaction_count']} lần")
+            
+            if summary['transaction_count'] > 0:
+                avg = summary['total_spent'] / summary['transaction_count']
+                stats_table.add_row("📊 Trung bình/lần", f"{avg:,.0f}đ")
+                stats_table.add_row("📉 Thấp nhất", f"{summary['min_spent']:,.0f}đ")
+                stats_table.add_row("📈 Cao nhất", f"{summary['max_spent']:,.0f}đ")
+            
+            console.print(Panel(stats_table, title="📊 THỐNG KÊ HÔM NAY", padding=(1, 2)))
+            
+            # Hiển thị số dư
+            balance_content = f"""💵 Tiền mặt                 {balance['cash_balance']:,.0f}đ
+🏦 Tài khoản                {balance['account_balance']:,.0f}đ
+💰 Tổng cộng                {balance['cash_balance'] + balance['account_balance']:,.0f}đ"""
+            
+            console.print(Panel(balance_content, title="💰 SỐ DƯ HIỆN TẠI", padding=(1, 3)))
+            
+            # Hiển thị TẤT CẢ giao dịch trong ngày
+            if daily_transactions:
+                transaction_table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
+                transaction_table.add_column("Thời gian", style="dim")
+                transaction_table.add_column("Món", style="cyan")
+                transaction_table.add_column("Giá", style="green", justify="right")
+                transaction_table.add_column("Bữa", style="yellow")
+                transaction_table.add_column("Loại", style="blue")
+                
+                for trans in daily_transactions:
+                    meal_time = trans['meal_time'] if trans['meal_time'] else ""
+                    trans_type = "💰" if trans['transaction_type'] == 'income' else "💸"
+                    account_type = "🏦" if trans['account_type'] == 'account' else "💵"
+                    
+                    transaction_table.add_row(
+                        trans['transaction_time'][:5] if trans['transaction_time'] else "",  # HH:MM
+                        trans['food_item'],
+                        f"{trans['price']:,.0f}đ",
+                        meal_time,
+                        f"{trans_type}{account_type}"
+                    )
+                
+                console.print(Panel(transaction_table, title="🕐 TẤT CẢ GIAO DỊCH HÔM NAY", padding=(1, 2)))
+            else:
+                console.print(Panel("Chưa có giao dịch nào hôm nay", title="🕐 GIAO DỊCH HÔM NAY", padding=(1, 2)))
+                
+        elif period == "weekly":
+            console.print("📅 Lấy thống kê tuần...")
+            
+            # Lấy tổng thống kê tuần
+            summary = tracker.db.get_spending_summary(1, 7)
+            weekly_data = tracker.db.get_weekly_summary_by_days(1, 7)
+            
+            # Bảng tổng quan
+            stats_table = Table(box=box.DOUBLE_EDGE)
+            stats_table.add_column("📅 Thống kê", style="cyan")
+            stats_table.add_column("Giá trị", style="green", justify="right")
+            
+            stats_table.add_row("📅 Thời gian", "7 NGÀY QUA")
+            stats_table.add_row("💸 Tổng chi tiêu", f"{summary['total_spent']:,.0f}đ" if summary['total_spent'] else "0đ")
+            stats_table.add_row("🔢 Số giao dịch", f"{summary['transaction_count']} lần")
+            
+            if summary['transaction_count'] > 0:
+                avg = summary['total_spent'] / summary['transaction_count']
+                stats_table.add_row("📊 Trung bình/lần", f"{avg:,.0f}đ")
+            
+            console.print(Panel(stats_table, title="📊 THỐNG KÊ TUẦN", padding=(1, 2)))
+            
+            # Bảng chi tiết theo từng ngày
+            daily_table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
+            daily_table.add_column("Ngày", style="cyan")
+            daily_table.add_column("Chi tiêu", style="red", justify="right")
+            daily_table.add_column("Thu nhập", style="green", justify="right")
+            daily_table.add_column("Giao dịch", style="blue", justify="center")
+            
+            for day_data in weekly_data:
+                date_obj = datetime.datetime.strptime(day_data['date'], '%Y-%m-%d')
+                date_display = date_obj.strftime('%d/%m (%a)')
+                
+                daily_table.add_row(
+                    date_display,
+                    f"{day_data['total_expense']:,.0f}đ" if day_data['total_expense'] > 0 else "-",
+                    f"{day_data['total_income']:,.0f}đ" if day_data['total_income'] > 0 else "-",
+                    f"{day_data['transaction_count']} lần"
+                )
+            
+            console.print(Panel(daily_table, title="📈 CHI TIẾT THEO NGÀY", padding=(1, 2)))
+            
+            # Hiển thị số dư
+            balance_content = f"""💵 Tiền mặt                 {balance['cash_balance']:,.0f}đ
+🏦 Tài khoản                {balance['account_balance']:,.0f}đ
+💰 Tổng cộng                {balance['cash_balance'] + balance['account_balance']:,.0f}đ"""
+            
+            console.print(Panel(balance_content, title="💰 SỐ DƯ HIỆN TẠI", padding=(1, 3)))
+            
+        elif period == "monthly":
+            console.print("📅 Lấy thống kê tháng...")
+            
+            # Lấy tổng thống kê tháng
+            summary = tracker.db.get_spending_summary(1, 30)
+            weekly_data = tracker.db.get_monthly_summary_by_weeks()
+            
+            # Bảng tổng quan
+            stats_table = Table(box=box.DOUBLE_EDGE)
+            stats_table.add_column("📅 Thống kê", style="cyan")
+            stats_table.add_column("Giá trị", style="green", justify="right")
+            
+            stats_table.add_row("📅 Thời gian", "30 NGÀY QUA")
+            stats_table.add_row("💸 Tổng chi tiêu", f"{summary['total_spent']:,.0f}đ" if summary['total_spent'] else "0đ")
+            stats_table.add_row("🔢 Số giao dịch", f"{summary['transaction_count']} lần")
+            
+            if summary['transaction_count'] > 0:
+                avg = summary['total_spent'] / summary['transaction_count']
+                stats_table.add_row("📊 Trung bình/lần", f"{avg:,.0f}đ")
+            
+            console.print(Panel(stats_table, title="📊 THỐNG KÊ THÁNG", padding=(1, 2)))
+            
+            # Bảng theo tuần
+            weekly_table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
+            weekly_table.add_column("Tuần", style="cyan")
+            weekly_table.add_column("Khoảng thời gian", style="dim")
+            weekly_table.add_column("Chi tiêu", style="red", justify="right")
+            weekly_table.add_column("Thu nhập", style="green", justify="right")
+            weekly_table.add_column("Giao dịch", style="blue", justify="center")
+            
+            for week_data in weekly_data:
+                start_date = datetime.datetime.strptime(week_data['start_date'], '%Y-%m-%d').strftime('%d/%m')
+                end_date = datetime.datetime.strptime(week_data['end_date'], '%Y-%m-%d').strftime('%d/%m')
+                
+                weekly_table.add_row(
+                    f"Tuần {week_data['week_num']}",
+                    f"{start_date} - {end_date}",
+                    f"{week_data['total_expense']:,.0f}đ" if week_data['total_expense'] > 0 else "-",
+                    f"{week_data['total_income']:,.0f}đ" if week_data['total_income'] > 0 else "-",
+                    f"{week_data['transaction_count']} lần"
+                )
+            
+            console.print(Panel(weekly_table, title="📈 CHI TIẾT THEO TUẦN", padding=(1, 2)))
+            
+            # Hỏi có muốn xem chi tiết 30 ngày + biểu đồ không
+            try:
+                choice = input("\n📊 Bạn có muốn xem chi tiết 30 ngày + biểu đồ không? (y/n): ").strip().lower()
+                
+                if choice in ['y', 'yes', 'có']:
+                    console.print("📊 Đang tạo biểu đồ chi tiết...")
+                    show_monthly_chart(tracker)
+                    
+                    # Hiển thị chi tiết tháng hiện tại
+                    monthly_data = tracker.db.get_current_month_summary_by_days(1)
+                    
+                    console.print(f"\n📅 Chi tiết từng ngày trong tháng {datetime.datetime.now().month}/{datetime.datetime.now().year}:")
+                    
+                    # Hiển thị 10 ngày một lần để không quá dài
+                    for i in range(0, len(monthly_data), 10):
+                        chunk = monthly_data[i:i+10]
+                        
+                        daily_table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
+                        daily_table.add_column("Ngày", style="cyan")
+                        daily_table.add_column("Chi tiêu", style="red", justify="right")
+                        daily_table.add_column("Thu nhập", style="green", justify="right")
+                        daily_table.add_column("GD", style="blue", justify="center")
+                        
+                        for day_data in chunk:
+                            date_obj = datetime.datetime.strptime(day_data['date'], '%Y-%m-%d')
+                            date_display = date_obj.strftime('%d/%m (%a)')
+                            
+                            daily_table.add_row(
+                                date_display,
+                                f"{day_data['total_expense']:,.0f}đ" if day_data['total_expense'] > 0 else "-",
+                                f"{day_data['total_income']:,.0f}đ" if day_data['total_income'] > 0 else "-",
+                                str(day_data['transaction_count']) if day_data['transaction_count'] > 0 else "-"
+                            )
+                        
+                        start_day = i + 1
+                        end_day = min(i + 10, len(monthly_data))
+                        title = f"📅 NGÀY {start_day}-{end_day} TRONG THÁNG"
+                        console.print(Panel(daily_table, title=title, padding=(1, 2)))
+                
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n💡 Đã bỏ qua chi tiết 30 ngày")
+            
+            # Hiển thị số dư
+            balance_content = f"""💵 Tiền mặt                 {balance['cash_balance']:,.0f}đ
+🏦 Tài khoản                {balance['account_balance']:,.0f}đ
+💰 Tổng cộng                {balance['cash_balance'] + balance['account_balance']:,.0f}đ"""
+            
+            console.print(Panel(balance_content, title="💰 SỐ DƯ HIỆN TẠI", padding=(1, 3)))
+            
+    except Exception as e:
+        console.print(f"❌ Lỗi: {e}")
+
+def show_monthly_chart(tracker):
+    """Tạo và hiển thị biểu đồ chi tiêu theo ngày trong tháng hiện tại"""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Backend không cần GUI, chỉ để save file
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from datetime import datetime, timedelta
+        import os
+        import subprocess
         
-        console.print(Panel(recent_table, title="🕐 GIAO DỊCH GẦN ĐÂY", border_style="yellow"))
+        print("📊 Đang tạo biểu đồ...")
+        
+        # Tạo folder để lưu charts
+        charts_folder = "expense_charts"
+        if not os.path.exists(charts_folder):
+            os.makedirs(charts_folder)
+        
+        # Lấy dữ liệu tháng hiện tại
+        monthly_data = tracker.db.get_current_month_summary_by_days(1)
+        
+        # Chuẩn bị dữ liệu cho biểu đồ
+        dates = []
+        expenses = []
+        incomes = []
+        
+        for day_data in monthly_data:
+            date_obj = datetime.strptime(day_data['date'], '%Y-%m-%d')
+            dates.append(date_obj)
+            expenses.append(day_data['total_expense'])
+            incomes.append(day_data['total_income'])
+        
+        # Tạo tên file với tháng/năm
+        current_month = datetime.now()
+        month_year = current_month.strftime('%Y-%m')
+        chart_filename = f"spending_chart_{month_year}.png"
+        chart_path = os.path.join(charts_folder, chart_filename)
+        
+        # Title với tháng/năm cụ thể
+        month_name_vn = {
+            1: "Tháng 1", 2: "Tháng 2", 3: "Tháng 3", 4: "Tháng 4",
+            5: "Tháng 5", 6: "Tháng 6", 7: "Tháng 7", 8: "Tháng 8", 
+            9: "Tháng 9", 10: "Tháng 10", 11: "Tháng 11", 12: "Tháng 12"
+        }
+        month_vn = month_name_vn[current_month.month]
+        
+        # Tạo biểu đồ với kích thước lớn hơn
+        fig = plt.figure(figsize=(16, 10))
+        
+        # Subplot cho chi tiêu
+        plt.subplot(2, 1, 1)
+        plt.plot(dates, expenses, 'r-', linewidth=2, label='Chi tiêu', marker='o', markersize=4)
+        plt.title(f'Chi tiêu theo Ngày - {month_vn}/{current_month.year}', fontsize=16, fontweight='bold')
+        plt.ylabel('Số tiền (VNĐ)', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        # Format trục x - hiển thị ngày trong tháng
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval=2))  # Mỗi 2 ngày
+        plt.xticks(rotation=45)
+        
+        # Format trục y để hiển thị số tiền đẹp
+        plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}đ'))
+        
+        # Subplot cho thu nhập
+        plt.subplot(2, 1, 2)
+        plt.plot(dates, incomes, 'g-', linewidth=2, label='Thu nhập', marker='s', markersize=4)
+        plt.title(f'Thu nhập theo Ngày - {month_vn}/{current_month.year}', fontsize=16, fontweight='bold')
+        plt.xlabel('Ngày trong tháng', fontsize=12)
+        plt.ylabel('Số tiền (VNĐ)', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        # Format trục x
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval=2))
+        plt.xticks(rotation=45)
+        
+        # Format trục y
+        plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}đ'))
+        
+        plt.tight_layout(pad=3.0)
+        
+        # Lưu biểu đồ với DPI cao
+        plt.savefig(chart_path, dpi=200, bbox_inches='tight', facecolor='white')
+        plt.close()  # Đóng figure để tiết kiệm memory
+        
+        # Mở biểu đồ bằng image viewer mặc định của hệ thống
+        print(f"📊 Mở biểu đồ {month_vn}/{current_month.year}...")
+        try:
+            subprocess.run(['xdg-open', chart_path], check=True)
+            print("✅ Đã mở biểu đồ thành công!")
+        except subprocess.CalledProcessError:
+            print("❌ Không thể mở biểu đồ, hãy mở file manually")
+        except FileNotFoundError:
+            # Fallback cho hệ thống không có xdg-open
+            try:
+                subprocess.run(['open', chart_path], check=True)  # macOS
+                print("✅ Đã mở biểu đồ thành công! (macOS)")
+            except:
+                print("❌ Không thể mở biểu đồ tự động")
+        
+        # Thông báo đường dẫn file
+        print(f"\n✅ Biểu đồ {month_vn}/{current_month.year} đã được lưu tại: {chart_path}")
+        print(f"📁 Thư mục charts: {os.path.abspath(charts_folder)}")
+        
+        # Hiển thị thông tin tóm tắt
+        total_expense = sum(expenses)
+        total_income = sum(incomes) 
+        days_with_expense = len([e for e in expenses if e > 0])
+        days_with_income = len([i for i in incomes if i > 0])
+        
+        print(f"\n📈 Tóm tắt {month_vn}/{current_month.year}:")
+        print(f"   💸 Tổng chi tiêu: {total_expense:,.0f}đ")
+        print(f"   💰 Tổng thu nhập: {total_income:,.0f}đ")
+        print(f"   📅 Ngày có chi tiêu: {days_with_expense}/{len(dates)} ngày")
+        print(f"   📅 Ngày có thu nhập: {days_with_income}/{len(dates)} ngày")
+        
+    except ImportError:
+        print("⚠️ Cần cài đặt matplotlib: uv add matplotlib")
+    except Exception as e:
+        print(f"❌ Lỗi tạo biểu đồ: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():

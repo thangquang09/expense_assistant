@@ -10,6 +10,7 @@ dependencies = [
     "gspread>=6.2.1",
     "langchain>=0.3.27",
     "langchain-google-genai>=2.1.8",
+    "matplotlib>=3.10.3",
     "python-dotenv>=1.1.1",
     "rich>=14.1.0",
 ]
