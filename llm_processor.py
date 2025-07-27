@@ -535,24 +535,71 @@ class ExpenseExtractor:
             # Parse JSON
             result = json.loads(response_text)
             
-            # Validate kết quả
-            if not isinstance(result.get('food_item'), str) or not result['food_item']:
-                raise ValueError("food_item không hợp lệ")
+            # Validate và fix kết quả
+            fixed_result = self._validate_and_fix_llm_result(result, original_message)
             
-            if not isinstance(result.get('price'), (int, float)) or result['price'] <= 0:
-                raise ValueError("price không hợp lệ")
-            
-            # Đảm bảo các field bắt buộc
-            return {
-                'food_item': result['food_item'].strip(),
-                'price': float(result['price']),
-                'meal_time': result.get('meal_time'),
-                'confidence': min(max(result.get('confidence', 0.5), 0.0), 1.0)
-            }
+            return fixed_result
             
         except Exception as e:
             print(f"Lỗi parse LLM response: {e}")
             return self._fallback_extraction(original_message)
+    
+    def _validate_and_fix_llm_result(self, result: Dict[str, Any], original_message: str) -> Dict[str, Any]:
+        """Validate và fix kết quả từ LLM"""
+        
+        # Đảm bảo có food_item hợp lệ
+        food_item = result.get('food_item', '').strip()
+        if not food_item or len(food_item) < 1:
+            # Thử extract từ original message
+            words = original_message.split()
+            for word in words:
+                word_clean = word.lower().strip()
+                if (word_clean not in ['ăn', 'uống', 'mua', 'sáng', 'trưa', 'chiều', 'tối'] 
+                    and not word_clean.endswith('k') 
+                    and not word_clean.isdigit() 
+                    and len(word_clean) > 1):
+                    food_item = word_clean
+                    break
+            
+            if not food_item:
+                food_item = 'món ăn'  # Default fallback
+        
+        # Đảm bảo có price hợp lệ  
+        price = result.get('price', 0)
+        if not isinstance(price, (int, float)) or price <= 0:
+            # Thử extract price từ original message
+            import re
+            price_patterns = [r'(\d+)k\b', r'(\d+)000\b', r'(\d+)\s*nghìn\b']
+            for pattern in price_patterns:
+                match = re.search(pattern, original_message.lower())
+                if match:
+                    price_str = match.group(1)
+                    if 'k' in pattern or 'nghìn' in pattern:
+                        price = float(price_str) * 1000
+                    else:
+                        price = float(price_str)
+                    break
+            
+            if price <= 0:
+                price = 1000  # Default fallback
+        
+        # Đảm bảo meal_time hợp lệ (có thể null)
+        meal_time = result.get('meal_time')
+        if meal_time and not isinstance(meal_time, str):
+            meal_time = None
+        
+        # Tính confidence dựa trên chất lượng data
+        confidence = result.get('confidence', 0.5)
+        if result.get('food_item') != food_item or result.get('price') != price:
+            confidence = max(confidence - 0.2, 0.3)  # Penalty cho fix
+        
+        return {
+            'food_item': food_item,
+            'price': float(price),
+            'meal_time': meal_time,
+            'confidence': min(max(confidence, 0.0), 1.0),
+            'offline_mode': False
+        }
     
     def _fallback_extraction(self, message: str) -> Dict[str, Any]:
         """Fallback rule-based extraction khi LLM thất bại"""
