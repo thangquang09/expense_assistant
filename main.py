@@ -11,6 +11,7 @@ Usage:
 """
 
 import sys
+import os
 import argparse
 from rich.console import Console
 from rich.panel import Panel
@@ -19,6 +20,7 @@ from rich import box
 from chatbot import ExpenseChatbot
 from expense_tracker import ExpenseTracker
 import datetime
+from config import set_current_model, get_current_model, list_available_models
 
 
 def create_parser():
@@ -73,6 +75,13 @@ Examples:
         '-sm', '--stats-monthly',
         action='store_true', 
         help='Show this month\'s spending statistics'
+    )
+    
+    # LLM configuration option - không thuộc mutually exclusive group
+    parser.add_argument(
+        '--llm',
+        metavar='MODEL_NAME',
+        help='Set LLM model (gemini, llama3, phi3) and save for future use'
     )
     
     return parser
@@ -526,10 +535,73 @@ def show_monthly_chart(tracker):
         traceback.print_exc()
 
 
+def handle_llm_config(model_name: str):
+    """Xử lý cấu hình mô hình LLM"""
+    console = Console()
+    
+    # Hiển thị mô hình hiện tại
+    current_model = get_current_model()
+    console.print(f"🤖 Mô hình hiện tại: [cyan]{current_model}[/cyan]")
+    
+    # Hiển thị danh sách mô hình có sẵn
+    available_models = list_available_models()
+    
+    console.print("\n📋 Mô hình có sẵn:")
+    models_table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
+    models_table.add_column("Tên", style="cyan")
+    models_table.add_column("Provider", style="green")
+    models_table.add_column("Model Name", style="yellow")
+    models_table.add_column("Trạng thái", style="blue")
+    
+    for name, settings in available_models.items():
+        provider = settings["provider"]
+        model_name_display = settings["model_name"]
+        
+        # Check status
+        if provider == "google":
+            api_key = os.getenv(settings["api_key_env"])
+            status = "✅ Sẵn sàng" if api_key else "❌ Thiếu API key"
+        elif provider == "ollama":
+            # Test Ollama connection
+            try:
+                import requests
+                response = requests.get(f"{settings['base_url']}/api/tags", timeout=2)
+                status = "✅ Sẵn sàng" if response.status_code == 200 else "⚠️ Offline"
+            except:
+                status = "❌ Không kết nối"
+        else:
+            status = "❓ Không rõ"
+        
+        # Highlight current model
+        if name == current_model:
+            status += " [bold](hiện tại)[/bold]"
+        
+        models_table.add_row(name, provider, model_name_display, status)
+    
+    console.print(models_table)
+    
+    # Cập nhật mô hình nếu được yêu cầu
+    if model_name.lower() != "list":
+        console.print(f"\n🔄 Đang cấu hình mô hình: {model_name}")
+        
+        if set_current_model(model_name):
+            console.print(f"[green]✅ Đã cấu hình mô hình: {model_name}[/green]")
+            console.print("💡 Mô hình này sẽ được sử dụng cho các lần chạy tiếp theo")
+        else:
+            console.print(f"[red]❌ Không thể cấu hình mô hình: {model_name}[/red]")
+    else:
+        console.print("\n💡 Để thay đổi mô hình: python main.py --llm <tên_mô_hình>")
+
+
 def main():
     """Main function với CLI support"""
     parser = create_parser()
     args = parser.parse_args()
+    
+    # Handle LLM configuration first
+    if args.llm:
+        handle_llm_config(args.llm)
+        return
     
     # Handle CLI operations
     if args.append:

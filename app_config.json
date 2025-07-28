@@ -1,0 +1,15 @@
+{
+  "llm_model": "llama3",
+  "model_settings": {
+    "gemini": {
+      "provider": "google",
+      "model_name": "gemini-1.5-flash",
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    "llama3": {
+      "provider": "ollama",
+      "model_name": "llama3:8b",
+      "base_url": "http://localhost:11434"
+    }
+  }
+}

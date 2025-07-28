@@ -1,6 +1,7 @@
 # Core dependencies
 python-dotenv==1.0.0
 rich==13.7.0
+requests==2.31.0
 
 # Database
 # SQLite is built-in with Python
@@ -8,6 +9,7 @@ rich==13.7.0
 # LLM and AI
 langchain==0.1.0
 langchain-google-genai==0.0.8
+langchain-ollama==0.1.0
 
 # Google Sheets (optional)
 gspread==5.12.0  
